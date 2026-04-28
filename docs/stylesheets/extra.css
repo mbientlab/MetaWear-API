@@ -13,9 +13,9 @@
   --md-primary-fg-color--dark: #008a91;
   --md-accent-fg-color: #00ABB3;
   --md-accent-fg-color--transparent: rgba(0, 171, 179, 0.1);
-  --md-default-bg-color: #1a1a2e;
-  --md-default-bg-color--light: #222240;
-  --md-default-bg-color--lighter: #2a2a4a;
+  --md-default-bg-color: #000000;
+  --md-default-bg-color--light: #111111;
+  --md-default-bg-color--lighter: #1a1a1a;
 }
 
 /* ── Typography tweaks ── */
