@@ -1,35 +1,55 @@
-site_name: MetaWear API
-site_description: Documentation for the MetaWear API
-site_author: lkasso
-
+site_name: MbientLab Documentation
+site_description: Documentation for MbientLab MetaSensors and the MetaWear BLE Protocol
+site_author: MbientLab
 theme:
   name: material
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
   palette:
     - scheme: default
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
-        icon: material/brightness-7
+        icon: material/weather-night
         name: Switch to dark mode
     - scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
-        icon: material/brightness-4
+        icon: material/weather-sunny
         name: Switch to light mode
   features:
     - navigation.sections
+    - navigation.expand
     - navigation.top
     - search.highlight
+    - search.suggest
     - content.code.copy
     - toc.follow
+    - header.autohide
+  icon:
+    repo: fontawesome/brands/github
+
+repo_url: https://github.com/mbientlab
+repo_name: mbientlab
 
 extra_css:
   - stylesheets/extra.css
 
+plugins:
+  - search
+
 nav:
   - Home: index.md
-  - Protocol Reference: protocol-reference.md
+  - Sensors:
+    - MetaMotionRL (MMRL): metamotion-rl.md
+    - MetaMotionS (MMS): metamotion-s.md
+  - MetaWear API:
+    - API Specification: api-specification.md
+    - Protocol Reference: protocol-reference.md
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -38,7 +58,21 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - admonition
   - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
   - attr_list
+  - md_in_html
+  - def_list
+  - pymdownx.tasklist:
+      custom_checkbox: true
   - toc:
       toc_depth: 3
+      permalink: true
   - tables
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/mbientlab
+    - icon: fontawesome/solid/globe
+      link: https://mbientlab.com

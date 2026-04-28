@@ -1,7 +1,7 @@
 # MetaWear BLE Protocol Reference
 
-Extracted from the MetaWear C++ SDK source files. Every byte-level detail needed to
-implement the protocol from scratch in Kotlin (or any other language).
+Every byte-level detail needed to implement the MetaWear BLE serial protocol
+from scratch in any language.
 
 ---
 
@@ -111,6 +111,13 @@ Model numbers (from `module_number` string in Device Info "model number" charact
 "8" -> MetaMotion S
 ```
 
+Hardware revisions (from `hardware_revision` string, characteristic `0x2A27`) shipped per model:
+```
+"5" -> r0.1, r0.2, r0.3, r0.4, r0.5      (MetaMotion R / RL)
+"8" -> r0.1                              (MetaMotion S)
+```
+Some firmware reports the bare `0.X` form without the leading `r`; treat both forms as equivalent.
+
 ---
 
 ## Module 0x01 — Switch
@@ -122,7 +129,7 @@ The switch button state is a data signal; response is a 1-byte value (0=released
 
 ## Module 0x02 — LED
 
-Register opcodes (defined inline in led.cpp):
+Register opcodes:
 ```
 LED_PLAY   = 0x01
 LED_STOP   = 0x02
@@ -144,7 +151,7 @@ uint16_t high_time_ms
 uint16_t fall_time_ms
 uint16_t pulse_duration_ms
 uint16_t delay_time_ms       // only if revision >= 1 (DELAYED_REVISION)
-uint8_t  repeat_count        // 0 = indefinite
+uint8_t  repeat_count        // 0xFF = indefinite (use 0xFF, not 0; 0 causes undefined behaviour on firmware)
 ```
 Total command: 17 bytes.
 
@@ -155,6 +162,13 @@ Autoplay:      [0x02, 0x01, 0x02]
 Pause:         [0x02, 0x01, 0x00]
 Stop:          [0x02, 0x02, 0x00]
 Stop+Clear:    [0x02, 0x02, 0x01]
+```
+
+### Required sequence
+Always send **Stop+Clear before writing a new pattern**. The firmware does not reset LED state on BLE reconnection; stale patterns from a previous session persist until explicitly cleared.
+
+```
+Stop+Clear  →  WritePattern (per channel)  →  Play
 ```
 
 ---
@@ -230,12 +244,35 @@ Disable: [0x03, 0x02, 0x00, 0x01]
 ```
 [0x03, 0x03, acc_conf_byte, acc_range_byte]
 ```
-`acc_conf_byte` layout (BMI160 `AccBmi160Config.acc`):
+`acc_conf_byte` layout — **BMI160**:
 ```
-bits 0-3: odr  (set to MblMwAccBmi160Odr + 1)
-bits 4-6: bwp  (2 = normal)
-bit  7:   us   (under-sampling; 1 for ODR < 12.5 Hz)
+bits 0-3: odr  (MblMwAccBmi160Odr + 1, i.e. 1-indexed)
+bits 4-6: bwp  (2 = normal for ODR >= 12.5 Hz; must be 0 when acc_us is set)
+bit  7:   us   (under-sampling: 1 for ODR < 12.5 Hz, 0 otherwise)
 ```
+Reference values:
+```
+0.78125 Hz -> 0x81    12.5 Hz -> 0x25    200 Hz -> 0x29
+  1.5625 Hz -> 0x82    25   Hz -> 0x26    400 Hz -> 0x2A
+   3.125 Hz -> 0x83    50   Hz -> 0x27    800 Hz -> 0x2B
+    6.25 Hz -> 0x84   100   Hz -> 0x28   1600 Hz -> 0x2C
+```
+
+`acc_conf_byte` layout — **BMI270** (different from BMI160):
+```
+bits 0-3: acc_odr          (same 1-indexed codes as BMI160)
+bits 4-6: acc_bwp          (always 2 = normal averaging)
+bit  7:   acc_filter_perf  (1 for ODR >= 12.5 Hz, 0 for ODR < 12.5 Hz)
+```
+Note: bit 7 is **inverted** vs BMI160. BMI270 uses it as a high-performance filter
+enable (not an under-sampling flag). Reference values:
+```
+0.78125 Hz -> 0x21    12.5 Hz -> 0xA5    200 Hz -> 0xA9
+  1.5625 Hz -> 0x22    25   Hz -> 0xA6    400 Hz -> 0xAA
+   3.125 Hz -> 0x23    50   Hz -> 0xA7    800 Hz -> 0xAB
+    6.25 Hz -> 0x24   100   Hz -> 0xA8   1600 Hz -> 0xAC
+```
+
 `acc_range_byte` (BMI160 FSR bitmasks):
 ```
 +/-2g  -> 0x03    scale = 16384 LSB/g
@@ -629,24 +666,97 @@ bit 5: GRAVITY_VECTOR
 bit 6: LINEAR_ACC
 ```
 
+### Underlying-sensor requirements per mode
+
+The fusion algorithm is fed by the on-board acc / gyro / mag modules. Each mode dictates which sensors must be running and at what rate; the host must configure and start each underlying sensor in addition to the fusion module itself.
+
+| Mode      | Acc                | Gyro          | Mag             |
+|-----------|--------------------|---------------|-----------------|
+| `SLEEP`   | —                  | —             | —               |
+| `NDOF`    | 100 Hz, host range | 100 Hz, host range | 25 Hz, xy=9, z=15 |
+| `IMU_PLUS`| 100 Hz, host range | 100 Hz, host range | —               |
+| `COMPASS` | 25 Hz,  host range | —             | 25 Hz, xy=9, z=15 |
+| `M4G`     | 50 Hz,  host range | —             | 25 Hz, xy=9, z=15 |
+
+Mag preset is fixed by the firmware: `xy_reps = 9`, `z_reps = 15`, ODR = 25 Hz → `[0x15, 0x04, 0x04, 0x0E]` followed by `[0x15, 0x03, 0x06]`.
+
 ### Commands
 
-**Write config + enable sensors:**
+The lifecycle for configuring, starting, and stopping sensor fusion follows this sequence of BLE commands:
+
+**Write fusion config:**
 ```
 [0x19, 0x02, mode_byte, range_byte]
 ```
-Then write acc / gyro / mag configs separately (see those modules).
+where `range_byte = acc_range | ((gyro_range + 1) << 4)`.
 
-**Enable output stream:**
+**Enable output mask:**
 ```
 [0x19, 0x03, enable_mask, 0x00]
 ```
+`enable_mask` is the per-signal bit (see *Enable mask bits* above). Multiple bits may be set to subscribe to several outputs from the same fusion run.
 
-**Start / Stop:**
+**Start / Stop the fusion algorithm:**
 ```
 Start: [0x19, 0x01, 0x01]
 Stop:  [0x19, 0x01, 0x00]
 ```
+
+**Clear output mask** (issued during stop, before stopping the underlying sensors):
+```
+[0x19, 0x03, 0x00, 0x7F]
+```
+
+#### Full configure sequence (NDOF, BMI160, ±2g / ±2000 dps shown)
+
+```
+[0x19, 0x02, 0x01, 0x10]   # fusion mode = NDOF, ranges packed
+[0x03, 0x03, 0x28, 0x03]   # acc 100 Hz, ±2g (BMI160: conf=0x28, range bitmask=0x03)
+[0x13, 0x03, 0x28, 0x00]   # gyro 100 Hz, ±2000 dps
+[0x15, 0x04, 0x04, 0x0E]   # mag repetitions: xy=9, z=15
+[0x15, 0x03, 0x06]         # mag ODR = 25 Hz
+```
+
+For **BMI270** the acc command differs: `[0x03, 0x03, 0xA8, 0x00]` (filter_perf bit 7 set, 0-based range).
+
+For `IMU_PLUS` the two mag commands are omitted. For `COMPASS` and `M4G` the gyro command is omitted (and the acc ODR is 25 Hz / 50 Hz respectively → conf = `0x26` / `0x27` on BMI160, `0xA6` / `0xA7` on BMI270).
+
+#### Full start sequence (NDOF + quaternion shown)
+
+```
+# Underlying sensors first — interrupt enables, then start
+[0x03, 0x02, 0x01, 0x00]   # acc data interrupt enable
+[0x13, 0x02, 0x01, 0x00]   # gyro data interrupt enable
+[0x15, 0x02, 0x01, 0x00]   # mag data interrupt enable
+[0x03, 0x01, 0x01]         # acc start
+[0x13, 0x01, 0x01]         # gyro start
+[0x15, 0x01, 0x01]         # mag start
+
+# Fusion last — enable mask then start the algorithm
+[0x19, 0x03, 0x08, 0x00]   # output_enable: bit 3 = QUATERNION
+[0x19, 0x01, 0x01]         # fusion start
+```
+
+`IMU_PLUS` skips the mag enable + mag start. `COMPASS` and `M4G` skip the gyro enable + gyro start.
+
+#### Full stop sequence (NDOF shown)
+
+Reverses the start: fusion off + mask cleared first, then underlying sensors are stopped + interrupts disabled.
+
+```
+[0x19, 0x01, 0x00]         # fusion stop
+[0x19, 0x03, 0x00, 0x7F]   # output_enable: clear all bits
+
+[0x03, 0x01, 0x00]         # acc stop
+[0x13, 0x01, 0x00]         # gyro stop
+[0x15, 0x01, 0x00]         # mag stop
+
+[0x03, 0x02, 0x00, 0x01]   # acc data interrupt disable
+[0x13, 0x02, 0x00, 0x01]   # gyro data interrupt disable
+[0x15, 0x02, 0x00, 0x01]   # mag data interrupt disable
+```
+
+A common host bug is to send only the fusion config + start (`[0x19, 0x02, …]` and `[0x19, 0x01, 0x01]`) without configuring or starting the underlying acc / gyro / mag — the fusion algorithm runs but produces no output because it never sees any input samples.
 
 **Read config:**
 ```
@@ -765,7 +875,8 @@ TICK_TIME_STEP = (48.0 / 32768.0) * 1000.0 = 1.46484375 ms/tick
 ```
 ENTRY_ID_MASK = 0x1F   (lower 5 bits of byte)
 RESET_UID_MASK = 0x07  (next 3 bits: bits 5-7)
-LOG_ENTRY_SIZE = 4 bytes (uint32_t)
+LOG_ENTRY_SIZE = 8 bytes total (1 id/reset + 3 tick + 4 data)
+LOG_ENTRY_DATA_SIZE = 4 bytes (uint32_t payload per entry)
 ```
 
 ### Commands
@@ -817,16 +928,20 @@ val resetUid = response[6]
 ```
 
 ### Log Entry Format (from READOUT_NOTIFY = 0x07)
-Each notification can contain 1 or 2 log entries (up to 20 bytes total):
+Each notification packet is `[0x0B, 0x07, entry...]` and carries 1 or 2 log
+entries of **8 bytes each** (so payload = 8 or 16 bytes, packet = 10 or 18 bytes
+including the 2-byte header):
 ```
 Entry at offset 2 (always present):
-  byte[offset+0]: (reset_uid << 5) | entry_id
-  byte[offset+1..4]: uint32 tick (little-endian)
-  byte[offset+5..8]: uint32 data (little-endian)
+  byte[offset+0]:    (reset_uid << 5) | entry_id     (reset_uid: bits 5-7, entry_id: bits 0-4)
+  byte[offset+1..3]: uint24 tick     (little-endian, 3 bytes)
+  byte[offset+4..7]: uint32 data     (little-endian, 4 bytes)
 
-Entry at offset 11 (present if len == 20):
+Entry at offset 10 (present if packet length == 18):
   same format as above
 ```
+
+Wall-clock time of an entry: `logReferenceDate + tick * TICK_TIME_STEP`.
 
 To convert to a signal value, reassemble 4-byte chunks from consecutive entry IDs.
 
@@ -920,7 +1035,246 @@ NOTIFY_ENABLE  = 0x07
 REMOVE_ALL     = 0x08
 ```
 
-Processors are created by writing a config to ADD and receiving back the assigned ID in the response.
+### Overview
+
+The data processor chains on-device signal transformations. Processors are created one at a time;
+each ADD response assigns an ID that can be used as the source for subsequent processors.
+
+### ADD command format
+
+```
+[0x09, 0x02, src_module, src_reg, src_data_id, src_config, proc_type, config_bytes...]
+```
+
+| Byte | Field | Notes |
+|------|-------|-------|
+| 0 | module | 0x09 |
+| 1 | register | 0x02 (ADD) |
+| 2 | src_module | Source module ID |
+| 3 | src_reg | Source register ID (not OR'd with 0x80) |
+| 4 | src_data_id | Source data ID, or 0xFF for "any" |
+| 5 | src_config | Encodes sample length and offset (see below) |
+| 6 | proc_type | Processor type ID |
+| 7+ | config_bytes | Per-processor config (see Processor Types) |
+
+**Response** (plain notification on (0x09, 0x02)):
+```
+[0x09, 0x02, assigned_proc_id]
+```
+Note: this is a plain notification, not a read-response (bit 7 is NOT set).
+
+### Source config byte formula
+
+```
+src_config = ((n_channels * channel_size - 1) << 5) | offset
+```
+
+This encodes the total sample length minus 1 in the upper 3 bits, and the byte offset within
+the sample in the lower 5 bits.
+
+**Common source signals:**
+
+| Signal | Module | Reg | ID | Channels | Ch size | src_config |
+|--------|--------|-----|----|----------|---------|------------|
+| Switch | 0x01 | 0x01 | 0xFF | 1 | 1B | 0x00 |
+| GPIO ADC | 0x05 | 0x07 | pin | 1 | 2B | 0x20 |
+| GPIO absolute | 0x05 | 0x06 | pin | 1 | 2B | 0x20 |
+| Accelerometer | 0x03 | 0x04 | 0xFF | 3 | 2B | 0xA0 |
+| Gyroscope | 0x13 | 0x05 | 0xFF | 3 | 2B | 0xA0 |
+| Temperature | 0x04 | 0xC1 | ch | 1 | 2B | 0x20 |
+| Processor output | 0x09 | 0x03 | proc_id | varies | varies | computed |
+
+### Processor streaming
+
+**Enable notifications:**
+```
+[0x09, 0x07, proc_id, 0x01]
+```
+
+**Disable notifications:**
+```
+[0x09, 0x07, proc_id, 0x00]
+```
+
+**Data notification format:**
+```
+[0x09, 0x03, proc_id, data_bytes...]
+```
+Multiple processors all share the same (0x09, 0x03) notification; demultiplex by proc_id at byte[2].
+
+### Remove processors
+
+**Remove one:**
+```
+[0x09, 0x06, proc_id]
+```
+
+**Remove all:**
+```
+[0x09, 0x08]
+```
+
+---
+
+### Processor Types
+
+#### 0x01 — Passthrough
+
+Gates data flow.
+
+Config bytes (3): `[mode, count_lo, count_hi]`
+
+| Mode | Value |
+|------|-------|
+| ALL | 0 |
+| CONDITIONAL | 1 |
+| COUNT | 2 |
+
+#### 0x02 — Accumulator / Counter
+
+Config byte (1): `{output_size-1 : 2, input_size-1 : 2, mode : 3}`
+
+| mode | Meaning |
+|------|---------|
+| 0 | Accumulate (SUM) |
+| 1 | Count events |
+
+For Counter, input_size field is 0 (ignored). Output is always 1 channel.
+
+**Reference test (test_led_controller step 1, Counter outputSize=1):**
+```
+[0x09, 0x02, 0x01, 0x01, 0xFF, 0x00, 0x02, 0x10]
+```
+Config byte 0x10 = `(0 & 0x3) | (1 << 4)` — outputSize=1, mode=COUNT.
+
+#### 0x03 — Average (Low-pass filter)
+
+Config bytes (2): `[byte0, sample_size]`
+
+`byte0 = (output_unit-1 & 0x3) | ((input_unit-1 & 0x3) << 2)`  (output == input size, mode=0=LPF)
+
+**Reference test (test_freefall step 2, Average of 2-byte RSS output, sampleSize=4):**
+```
+[0x09, 0x02, 0x09, 0x03, 0x00, 0x20, 0x03, 0x05, 0x04]
+```
+Config bytes `[0x05, 0x04]` — unit=2, s=1 → 1|(1<<2)=0x05; sample_size=4.
+
+#### 0x06 — Comparator
+
+Config bytes (7): `[is_signed, operation, padding, ref_b0, ref_b1, ref_b2, ref_b3]`
+
+Reference is a signed Int32 in little-endian byte order.
+
+| Operation | Value |
+|-----------|-------|
+| EQ | 0 |
+| NEQ | 1 |
+| LT | 2 |
+| LTE | 3 |
+| GT | 4 |
+| GTE | 5 |
+
+**Reference test (test_freefall step 4, EQ -1 signed):**
+```
+config: [0x01, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF]
+```
+
+#### 0x07 — RMS / RSS Combiner
+
+Reduces a multi-axis signal to a scalar magnitude.
+
+Config bytes (2): `[byte0, mode]`
+
+`byte0 = (unit-1 & 0x3) | ((unit-1 & 0x3) << 2) | ((channels-1 & 0x7) << 4) | (is_signed << 7)`
+
+| Mode | Value |
+|------|-------|
+| RMS | 0 |
+| RSS | 1 |
+
+Output: 1 channel, same byte width as one input channel, unsigned.
+
+**Reference test (test_freefall step 1, RSS of accelerometer 3ch×2B signed):**
+```
+[0x09, 0x02, 0x03, 0x04, 0xFF, 0xA0, 0x07, 0xA5, 0x01]
+```
+Config bytes `[0xA5, 0x01]` — unit=2, s=1, ch=3, signed: `1|(1<<2)|(2<<4)|0x80 = 0xA5`, mode=RSS=1.
+
+#### 0x08 — Time Delay
+
+Passes one sample per period.
+
+Config bytes (5): `[byte0, period_b0, period_b1, period_b2, period_b3]`
+
+`byte0 = ((data_length-1) & 0x7) | ((mode & 0x7) << 3)`
+
+Period is in milliseconds, little-endian UInt32.
+
+| Mode | Value |
+|------|-------|
+| ABSOLUTE | 0 |
+| DIFFERENTIAL | 1 |
+
+#### 0x09 — Math
+
+Arithmetic transform applied per sample.
+
+Config bytes (7): `[byte0, operation, rhs_b0, rhs_b1, rhs_b2, rhs_b3, n_channels]`
+
+`byte0 = (output_unit-1 & 0x3) | ((input_unit-1 & 0x3) << 2) | (is_signed << 4)`
+
+`n_channels = inputChannels - 1` when multichannel, else 0.
+
+| Operation | Value |
+|-----------|-------|
+| ADD | 0 |
+| SUBTRACT | 1 |
+| MULTIPLY | 2 |
+| DIVIDE | 3 |
+| MODULO | 4 |
+| EXPONENT | 5 |
+| SQRT | 6 |
+| LSHIFT | 7 |
+| RSHIFT | 8 |
+| ABS | 9 |
+| CONSTANT | 10 |
+| NEGATE | 11 |
+| FLOOR | 12 |
+| CEIL | 13 |
+| ROUND | 14 |
+
+**Reference test (test_led_controller step 2, counter % 2, unsigned, output=4):**
+```
+config: [0x03, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00]
+```
+byte0 = `(4-1 & 0x3) | ((1-1 & 0x3) << 2) | (0 << 4) = 0x03`; op=MODULO=4; rhs=2 LE32; nch=0.
+
+#### 0x0A — Sample Delay
+
+Buffers N samples before emitting.
+
+Config bytes (2): `[data_length - 1, bin_size]`
+
+#### 0x0D — Threshold
+
+Emits a value when the input crosses a boundary.
+
+Config bytes (7): `[byte0, boundary_b0, boundary_b1, boundary_b2, boundary_b3, hyst_b0, hyst_b1]`
+
+`byte0 = (unit_size-1 & 0x3) | (is_signed << 2) | ((mode & 0x7) << 3)`
+
+Boundary is a signed Int32 in little-endian. Hysteresis is an unsigned UInt16 in little-endian.
+
+| Mode | Value | Output |
+|------|-------|--------|
+| ABSOLUTE | 0 | raw value (only when crossing) |
+| BINARY | 1 | Int32: +1 when above, –1 when below |
+
+**Reference test (test_freefall step 3, BINARY boundary=8192 unsigned):**
+```
+config: [0x09, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00]
+```
+byte0 = `(2-1 & 0x3) | (0 << 2) | (1 << 3) = 0x09`; boundary=8192=0x2000 LE32; hyst=0.
 
 ---
 
@@ -1012,8 +1366,11 @@ MMS_PHY_REVISION          = 10
 
 **Set device name:**
 ```
-[0x11, 0x01, ...utf8_bytes...]
+[0x11, 0x01, ...ascii_bytes...]
 ```
+Constraints (enforced by firmware for BLE advertising):
+- Maximum **26 ASCII bytes** (not UTF-8). Longer strings are silently truncated by the board.
+- Allowed characters: `A-Z`, `a-z`, `0-9`, `_`, `-`, and space. Writing other code points will be rejected or mangled by the advertising layer.
 
 **Set advertising interval:**
 ```
@@ -1108,6 +1465,77 @@ Disable pin change notify:[0x05, 0x0B, pin, 0x00]
 
 ---
 
+## Module 0x07 — iBeacon
+
+### Register Opcodes
+```
+ENABLE    = 0x01
+UUID      = 0x02
+MAJOR     = 0x03
+MINOR     = 0x04
+RX_POWER  = 0x05
+TX_POWER  = 0x06
+PERIOD    = 0x07
+```
+
+### Commands
+```
+Enable iBeacon:          [0x07, 0x01, 0x01]
+Disable iBeacon:         [0x07, 0x01, 0x00]
+Set UUID (16 bytes BE):  [0x07, 0x02, b0, b1, ..., b15]
+Set major (UInt16 LE):   [0x07, 0x03, major_lo, major_hi]
+Set minor (UInt16 LE):   [0x07, 0x04, minor_lo, minor_hi]
+Set RX power (Int8):     [0x07, 0x05, power_byte]
+  RX power = signal strength at 1m, broadcast in advert for ranging.
+  Typical: –55 dBm → 0xC9.
+Set TX power (Int8):     [0x07, 0x06, power_byte]
+  TX power = actual BLE transmission power.
+  Typical: –4 dBm → 0xFC, 0 dBm → 0x00.
+Set period (UInt16 LE):  [0x07, 0x07, period_lo, period_hi]
+  Period is in milliseconds. Typical: 700 ms → [0xBC, 0x02].
+```
+
+### Reference test vectors
+```
+Enable:       [0x07, 0x01, 0x01]
+Disable:      [0x07, 0x01, 0x00]
+SetMajor(78): [0x07, 0x03, 0x4E, 0x00]
+SetMinor(0x1D1D): [0x07, 0x04, 0x1D, 0x1D]
+SetRXPower(-55):  [0x07, 0x05, 0xC9]
+SetTXPower(-12):  [0x07, 0x06, 0xF4]
+SetPeriod(0x3AB3):[0x07, 0x07, 0xB3, 0x3A]
+```
+
+---
+
+## Module 0x08 — Haptic
+
+### Register Opcodes
+```
+PULSE = 0x01
+```
+
+### Command
+```
+[0x08, 0x01, duty_cycle_byte, pulse_width_lo, pulse_width_hi, mode]
+```
+
+| Field | Description |
+|---|---|
+| `duty_cycle_byte` | Motor: `floor(dutyCycle% × 248 / 100)`, clamped to 0–248. Buzzer: always `0x7F`. |
+| `pulse_width_lo/hi` | Pulse duration in milliseconds, UInt16 little-endian. |
+| `mode` | `0x00` = ERM haptic motor, `0x01` = piezo buzzer. |
+
+### Reference test vectors
+```
+Motor 100%, 5000 ms: [0x08, 0x01, 0xF8, 0x88, 0x13, 0x00]
+  0xF8 = 248 (100% duty cycle), 0x1388 = 5000 ms, mode=0x00
+Buzzer, 7500 ms:     [0x08, 0x01, 0x7F, 0x4C, 0x1D, 0x01]
+  0x7F always for buzzer, 0x1D4C = 7500 ms, mode=0x01
+```
+
+---
+
 ## Module 0x0D — Serial Passthrough (I2C / SPI)
 
 ### Register Opcodes
@@ -1116,11 +1544,82 @@ I2C_READ_WRITE = 0x01
 SPI_READ_WRITE = 0x02
 ```
 
+### I2C Write
+```
+[0x0D, 0x01, device_addr, reg_addr, data_len, id, data...]
+```
+
+| Field | Description |
+|---|---|
+| `device_addr` | 7-bit I2C address of the peripheral. |
+| `reg_addr` | Register (sub-address) to write to. |
+| `data_len` | Number of payload bytes that follow. |
+| `id` | Caller-assigned identifier (0–9); echoed in read responses. |
+| `data...` | Payload bytes. |
+
+### I2C Read
+Send:
+```
+[0x0D, 0xC1, device_addr, reg_addr, read_len, id]
+```
+`0xC1 = 0x01 | 0x80 (read bit) | 0x40 (data_id bit)` — the data_id bit tells the board to include `id` as byte[2] in its response.
+
+Board responds with a plain notification (bit 7 NOT set):
+```
+[0x0D, 0x01, id, byte0, byte1, ...]
+```
+
+### Reference test vector
+```
+Read 10 bytes from device 0x1C, register 0x0D, id=1:
+  Send:    [0x0D, 0xC1, 0x1C, 0x0D, 0x0A, 0x01]
+  Receive: [0x0D, 0x01, 0x01, data...]
+```
+
+### SPI Write
+```
+[0x0D, 0x02, slave_select, clock, mode, data_len, msb_first, nrf_pins, id, data...]
+```
+
+### SPI Read
+Send:
+```
+[0x0D, 0xC2, slave_select, clock, mode, read_len, msb_first, nrf_pins, id]
+```
+`0xC2 = 0x02 | 0x80 | 0x40` — same read+data_id bit pattern as I2C.
+
+Board responds:
+```
+[0x0D, 0x02, id, byte0, byte1, ...]
+```
+
+**SPI clock enum values:**
+```
+0 = 125 kHz
+1 = 250 kHz
+2 = 500 kHz
+3 = 1 MHz
+4 = 2 MHz
+5 = 4 MHz
+6 = 8 MHz
+```
+
+**SPI mode (CPOL/CPHA):**
+```
+0 = mode 0 (CPOL=0, CPHA=0)
+1 = mode 1 (CPOL=0, CPHA=1)
+2 = mode 2 (CPOL=1, CPHA=0)
+3 = mode 3 (CPOL=1, CPHA=1)
+```
+
+**`msb_first`:** `1` = MSB transmitted first (typical), `0` = LSB first.
+**`nrf_pins`:** `1` = use nRF internal SPI pins, `0` = use board expansion header pins.
+
 ---
 
 ## Module 0xFE — Debug
 
-### Register Opcodes (defined inline in debug.cpp)
+### Register Opcodes
 ```
 RESET             = 0x01
 BOOTLOADER        = 0x02
