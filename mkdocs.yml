@@ -49,7 +49,6 @@ nav:
     - MetaMotionS (MMS): metamotion-s.md
   - MetaWear API:
     - API Specification: api-specification.md
-    - Protocol Reference: protocol-reference.md
 
 markdown_extensions:
   - pymdownx.highlight:

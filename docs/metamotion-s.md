@@ -2,7 +2,7 @@
 
 ![MetaMotionS](assets/MetaMotionR-t.png){ align=center }
 
-MetaMotionS is powered by a rechargeable lithium ion battery. It has a typical battery life of 8 to 24 days. Please keep your MMS plugged-in and charged when not in use.
+MetaMotionS is powered by a rechargeable lithium-polymer (LiPo) battery. It has a typical battery life of 8 to 24 days. Please keep your MMS plugged-in and charged when not in use.
 
 Since it is USB powered, you can add a battery pack to get even more life out of your MetaMotionS.
 
@@ -12,7 +12,7 @@ The MMS optionally comes with a plastic case. Please note that the proximity of 
 
 | Name | Battery              | Size              | Memory               |
 | :--- | :------------------- | :---------------- | :------------------- |
-| MMS  | 100mAh recharge lipo | 17mm x 25mm x 5mm | 512MB (30M entries)  |
+| MMS  | 100mAh recharge lipo | 17mm x 25mm x 5mm | 512MB (~67M entries)  |
 
 ## Downloads
 
