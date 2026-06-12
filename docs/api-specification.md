@@ -2086,7 +2086,7 @@ The **Ambient Light Module** provides access to the Lite-On **LTR-329ALS** ambie
 
 Illuminance is returned as an unsigned 32-bit integer in units of **milli-lux** (divide by 1000 to get lux).
 
-The **Config** register maps to the LTR-329 `ALS_CONTR` and `ALS_MEAS_RATE` registers (gain, integration time, and measurement rate).
+The **Config** register maps to the LTR-329 `ALS_CONTR` and `ALS_MEAS_RATE` registers (gain, integration time, and measurement rate). Refer to the [LTR-329ALS-01 Datasheet](http://www.mouser.com/ds/2/239/Lite-On_LTR-329ALS-01%20DS_ver1.1-348647.pdf) for the register bit definitions.
 
 | Setting              | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                                       |
 | :------------------- | :------ | :--- | :--- | :--- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2588,11 +2588,12 @@ The two currently supported MetaSensor boards are:
 | Battery Life     | 1 \- 14 days (usage dependent)                | 8 \- 24 days (usage dependent)                             |
 | Physical Size    | 17mm x 25mm x 5mm                             | 17mm x 25mm x 5mm                                         |
 | Log Memory       | 8MB (~1M log entries)                          | 512MB (~67M log entries)                                   |
-| Accelerometer    | BMI160                                         | BMI270                                                     |
-| Gyroscope        | BMI160                                         | BMI270                                                     |
-| Magnetometer     | BMM150                                         | BMM150                                                     |
-| Barometer / Temp | BMP280                                         | BMP280                                                     |
-| Ambient Light    | None                                           | LTR\-329ALS\-01                                            |
+| Accelerometer    | [BMI160](https://www.bosch-sensortec.com/products/motion-sensors/imus/bmi160) | [BMI270](https://www.bosch-sensortec.com/products/motion-sensors/imus/bmi270) |
+| Gyroscope        | [BMI160](https://www.bosch-sensortec.com/products/motion-sensors/imus/bmi160) | [BMI270](https://www.bosch-sensortec.com/products/motion-sensors/imus/bmi270) |
+| Magnetometer     | [BMM150](https://www.bosch-sensortec.com/products/motion-sensors/magnetometers-bmm150/) | [BMM150](https://www.bosch-sensortec.com/products/motion-sensors/magnetometers-bmm150/) |
+| Barometer        | None                                           | [BMP280](https://www.bosch-sensortec.com/products/environmental-sensors/pressure-sensors/bmp280/) |
+| Temperature      | Thermistor, nRF on-die                         | Thermistor, nRF on-die, BMP280                             |
+| Ambient Light    | None                                           | [LTR\-329ALS\-01](http://www.mouser.com/ds/2/239/Lite-On_LTR-329ALS-01%20DS_ver1.1-348647.pdf) |
 | Charging         | Micro\-USB                                     | Micro\-USB                                                 |
 | MCU              | Nordic nRF52832 (ARM Cortex-M4F, 512kB flash, 64kB RAM) | Nordic nRF52840 (ARM Cortex-M4F, 1MB flash, 256kB RAM) |
 
