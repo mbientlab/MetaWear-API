@@ -1055,15 +1055,45 @@ the sample in the lower 5 bits.
 
 #### Processor streaming
 
-**Enable notifications:**
+**Enable notifications — BOTH writes are required:**
 ```
-[0x09, 0x07, proc_id, 0x01]
+[0x09, 0x07, proc_id, 0x01]   <- route this processor's output to NOTIFY
+[0x09, 0x03, 0x01]            <- subscribe the NOTIFY register itself
 ```
+The second write is the standard per-register notify-enable (see *Subscribing
+to Register Notifications*) applied to the shared NOTIFY register. **Without
+it the board emits nothing for any processor** — hardware-verified on MMS
+firmware 1.7.2, where an actively-fed counter produced zero notifications
+until `[0x09, 0x03, 0x01]` was sent. (C++ `MblMwDataProcessor::subscribe()`
+sends both; earlier versions of this document listed only the first.)
 
 **Disable notifications:**
 ```
 [0x09, 0x07, proc_id, 0x00]
 ```
+
+#### Read-signal routing (hardware-observed, firmware 1.7.2)
+
+Readable registers (temperature, GPIO analog, …) have two read forms, and
+the firmware routes the responses differently:
+
+- **Loud read** (`register | 0x80`, e.g. `[0x04, 0x81, ch]`): the response is
+  sent to the host **and** feeds data processors whose **Add/Create source
+  register byte equals the loud register byte** (`0x81` for temperature,
+  `0x87` for GPIO ADC). Processors created with the silent-form source byte
+  (`0xC1`/`0xC7`, as the C++ SDK encodes them) received **nothing** from
+  either read form in our tests.
+- **Silent read** (`register | 0xC0`, e.g. `[0x04, 0xC1, ch]`): no BLE
+  response; the data feeds **logger triggers** registered with the
+  silent-form register byte and the channel as the source index.
+  The logged payload has the data-id (channel) byte **stripped** — for
+  temperature the flash chunk is the bare int16 at offset 0, not
+  `[channel, lo, hi]`.
+
+The Debug **Notification Spoofer** (`[0xFE, 0x03, module, register, 0x00,
+data…]`) injects through the same dispatch and **does** reach data
+processors (provided the processor notify path is enabled as above) — a
+useful way to drive deterministic test values through on-board chains.
 
 **Data notification format:**
 ```
@@ -2763,7 +2793,7 @@ Detects pulses (peaks above a threshold for a minimum width) in the input data.
 | :--- | :-------------------- | :------- | :----------------------------------------------------------------- |
 | 0    | Length                | uint8\_t | Length of input data in bytes                                       |
 | 1    | Trigger Mode          | uint8\_t | `0` \= trigger on width (only defined mode)                        |
-| 2    | Output Mode           | uint8\_t | `0` \= width of pulse, `1` \= area (sum) of pulse, `2` \= peak of pulse, `3` \= 0x01 on detection. Mode `3` postdates the base firmware filter table but is supported on current firmware (1.7.x) — the SDKs send it with no version gate. |
+| 2    | Output Mode           | uint8\_t | `0` \= width of pulse, `1` \= area (sum) of pulse, `2` \= peak of pulse, `3` \= 0x01 on detection. Mode `3` postdates the base firmware filter table and is **hardware-verified working on 1.7.2**. Open question: in the same test, mode `2` (peak) emitted nothing for a waveform on which mode `3` fired — the completion-emission modes (`0`-`2`) are unconfirmed on 1.7.2. |
 | 3-6  | Threshold             | 4 bytes  | Minimum value for pulse detection (int32)                          |
 | 7-8  | Width                 | uint16\_t | Minimum pulse width in samples                                    |
 
@@ -2864,7 +2894,7 @@ The math operations are:
 | 3     | Divide    | input / rhs         |
 | 4     | Modulus   | input % rhs         |
 | 5     | Exponent  | input ^ rhs         |
-| 6     | Sqrt      | sqrt(input)         |
+| 6     | Sqrt      | sqrt(input) — integer result, **floored** (hardware-verified on 1.7.2: sqrt(2)→1, sqrt(3)→1, sqrt(4)→2) |
 | 7     | Left Shift| input << rhs        |
 | 8     | Right Shift| input >> rhs       |
 | 9     | Subtract  | input \- rhs        |
