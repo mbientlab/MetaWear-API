@@ -942,25 +942,30 @@ The filter notification system allows the host to receive processed data. The **
 
 The available filter types are:
 
-| Filter Type ID | Name                  | Description                                                         |
-| :------------- | :-------------------- | :----------------------------------------------------------------- |
-| `0x01`         | Passthrough           | Passes data through, optionally with a count limit                 |
-| `0x02`         | Accumulator / Counter | Accumulates (sums) values or counts events                         |
-| `0x03`         | Averager (Low-Pass)   | Low-memory recursive average / low-pass filter                     |
-| `0x06`         | Comparator            | Compares input against a reference value                           |
-| `0x07`         | RMS / RSS             | Root-mean-square / root-sum-square of multi-component (XYZ) data   |
-| `0x08`         | Time                  | Periodically samples / downsamples data by time, or emits sample differences |
-| `0x09`         | Math                  | Performs an arithmetic operation on data                           |
-| `0x0A`         | Sample Delay          | Buffers and delays data by a fixed number of samples               |
-| `0x0B`         | Pulse                 | Detects a pulse (a run of samples past a threshold)                |
-| `0x0C`         | Delta                 | Detects when data changes by a specified amount                    |
-| `0x0D`         | Threshold             | Detects when data crosses a threshold                              |
-| `0x0F`         | Buffer                | Stores the latest data sample for later retrieval                  |
-| `0x10`         | Packer                | Packs multiple data samples into one notification                  |
-| `0x11`         | Accounter             | Prepends timestamps / counters to data                             |
-| `0x1B`         | Fuser                 | Combines (fuses) data from multiple sources                        |
+| Filter Type ID | Name                  | SDK exposed | Description                                                         |
+| :------------- | :-------------------- | :---------- | :----------------------------------------------------------------- |
+| `0x01`         | Passthrough           | Yes         | Passes data through, optionally with a count limit                 |
+| `0x02`         | Accumulator / Counter | Yes         | Accumulates (sums) values or counts events                         |
+| `0x03`         | Vector Averager (Low/High-Pass) | Yes | Low-memory recursive average over an input vector              |
+| `0x04`         | Punch Detector        | No          | Detects punch-shaped acceleration curves                            |
+| `0x05`         | Peak Detector         | No          | Detects local maxima/minima in the input stream                     |
+| `0x06`         | Comparator            | Yes         | Compares input against a reference value                           |
+| `0x07`         | RMS / RSS             | Yes         | Root-mean-square / root-sum-square of multi-component (XYZ) data   |
+| `0x08`         | Time                  | Yes         | Periodically samples / downsamples data by time, or emits sample differences |
+| `0x09`         | Math                  | Yes         | Performs an arithmetic operation on data                           |
+| `0x0A`         | Sample Delay          | Yes         | Buffers and delays data by a fixed number of samples               |
+| `0x0B`         | Pulse                 | Yes         | Detects a pulse (a run of samples past a threshold)                |
+| `0x0C`         | Delta                 | Yes         | Detects when data changes by a specified amount                    |
+| `0x0D`         | Threshold             | Yes         | Detects when data crosses a threshold                              |
+| `0x0E`         | Multi-Channel Averager | No         | Recursive average with one averager allocated per channel          |
+| `0x0F`         | Buffer                | Yes         | Stores the latest data sample for later retrieval                  |
+| `0x10`         | Packer                | Yes         | Packs multiple data samples into one notification                  |
+| `0x11`         | Accounter             | Yes         | Prepends timestamps / counters to data                             |
+| `0x12`-`0x19`  | Board-specific / Custom / Null | No | Reserved for board-specific processors                             |
+| `0x1A`         | Quaternion Averager   | No          | Recursive average of quaternion data                                |
+| `0x1B`         | Fuser                 | Yes         | Combines (fuses) data from multiple sources                        |
 
-The Filter Type IDs are **not contiguous** — there are no `0x04`, `0x05`, or `0x0E` types, and Fuser is `0x1B`.
+Every ID from `0x01`-`0x1B` is defined in firmware. The **SDK exposed** column marks which types the MetaWear SDKs can create (`type_to_id` in MetaWear-SDK-Cpp); the firmware-only types (`0x04`, `0x05`, `0x0E`, `0x1A`) are documented below from the firmware filter specification but have no SDK constructor — to use one, build the **Filter Add / Create** command by hand.
 
 #### Filter Configuration Reference
 
@@ -1720,7 +1725,7 @@ The MMS is also able to provide users with the ability to read the charge of the
 | Partial Scan Response Packet | `0x08`  | W    | 13   |      | Byte 0-12: Start of a scan response packet; prepended to the next Scan Response Packet command                                                                                                                                                                   |
 | Connection Parameters        | `0x09`  | RW   | 8    | 8    | Byte 0-1: Minimum connection interval (uint16, units of 1.25 ms, range 6-3200) Byte 2-3: Maximum connection interval (uint16, units of 1.25 ms, range 6-3200) Byte 4-5: Slave latency (intervals the device may skip, range 0-1000) Byte 6-7: Supervision timeout (uint16, units of 10 ms, range 10-3200) |
 | Disconnect Event             | `0x0A`  | N    | 0    | 0    | Empty payload \- notification sent on disconnect                                                                                                                                                                                                                |
-| Device GAP (MAC) Address     | `0x0B`  | R    |      | 6    | Byte 0-5: Address, little-endian (LSB first). No address-type byte (verified against MetaWear-SDK-Cpp, which parses a 6-byte MAC signal).                                                                                                                        |
+| Device GAP (MAC) Address     | `0x0B`  | R    |      | 6-7  | Older firmware: Byte 0-5: Address, little-endian (LSB first). Current firmware: Byte 0: Address type (`1` \= random static), Byte 1-6: Address, little-endian. Parsers must handle both lengths — MetaWear-SDK-Cpp's `convert_to_mac_address` does `offset = (len == 7) ? 1 : 0`, and its test vector is the 7-byte form.                                  |
 | Battery State                | `0x0C`  | RN   |      | 3    | Byte 0: Battery charge in % (uint8) Byte 1-2: Battery voltage in mV (uint16)                                                                                                                                                                                     |
 | Watchdog Enable              | `0x0D`  | R    |      | 3    | Byte 0: `0` \= disable, `1` \= enable. State persists through resets other than power cycling and the watchdog reset itself.                                                                                                                                     |
 | Watchdog Config              | `0x0E`  | RW   | 5    | 5    | Immutable while the watchdog is enabled; persists through soft reset. Byte 0-3: Countdown timer count (uint32, units of (Value+1)/32768 s) Byte 4: Bit 0 \= Run While Sleeping (`1` \= run while asleep, `0` \= pause)                                            |
@@ -2698,7 +2703,7 @@ Approximate current draw per sensor when active (excluding BLE overhead):
 
 When creating a filter via the **Data Processor Module** (0x09) **Add** register (0x02), the filter configuration bytes (Byte 4 onward of the **Add / Create** command) are structured differently for each filter type. This section details the per-filter configuration byte layout; the byte tables below are numbered from byte 0 of the configuration.
 
-The Type IDs are **non-contiguous** — refer to the Filter Type table in the Data Processor Module section above for the canonical list (`0x01`, `0x02`, `0x03`, `0x06`–`0x0D`, `0x0F`–`0x11`, `0x1B`). The subsections below are grouped for readability and are not in strict numeric order.
+Refer to the Filter Type table in the Data Processor Module section above for the canonical list. Firmware defines every ID from `0x01`–`0x1B` (with `0x12`–`0x19` reserved for board-specific processors); the SDKs expose a subset. The subsections below are grouped for readability and are not in strict numeric order. Layouts marked *firmware-only* come from the firmware filter specification and have no SDK constructor.
 
 ### Passthrough (Type 0x01)
 
@@ -2723,7 +2728,7 @@ Counts events or accumulates data values.
 
 **State (Set/Reset)**: Count Value \- uint32\_t (4 bytes).
 
-### Low Memory Average / Low Pass (Type 0x03)
+### Vector Low Memory Average / Low Pass / High Pass (Type 0x03)
 
 Computes a running average using a recursive algorithm that uses minimal memory.
 
@@ -2732,10 +2737,23 @@ Computes a running average using a recursive algorithm that uses minimal memory.
 | 0 [0-1]  | Output Length| 2 bits | Output data length (0 \= 1 byte, 3 \= 4 bytes)                                       |
 | 0 [2-3]  | Input Length | 2 bits | Input value length (0 \= 1 byte, 3 \= 4 bytes)                                       |
 | 0 [5]    | Mode         | 1 bit  | 0 \= Low pass filter, 1 \= High pass filter (firmware >= 1.2.2)                       |
-| 1        | Size         | uint8\_t | Internal buffer size                                                                 |
-| 2        | Count        | uint8\_t | Depth of average. Non-power-of-2 results in slower software divide.                  |
+| 1        | Average Depth | uint8\_t | Depth of average. Non-power-of-2 results in slower software divide.                 |
+| 2        | Input Vector Length | uint8\_t | Number of inputs in the input vector (0 \= 1, 1 \= 2, …). Optional — the SDKs omit it for single-vector averages. |
 
 **State (Set/Reset)**: No parameters \- resets the running average.
+
+### Multi-Channel Low Memory Average (Type 0x0E) — *firmware-only*
+
+Recursive average that allocates one independent averager per channel.
+
+| Byte     | Field        | Size   | Description                                                       |
+| :------- | :----------- | :----- | :----------------------------------------------------------------- |
+| 0 [0-1]  | Output Length| 2 bits | Output data length (0 \= 1 byte, 3 \= 4 bytes)                    |
+| 0 [2-3]  | Input Length | 2 bits | Input value length (0 \= 1 byte, 3 \= 4 bytes)                    |
+| 1        | Average Depth | uint8\_t | Depth of average. Non-power-of-2 results in slower software divide. |
+| 2        | Channel Count | uint8\_t | Number of channels to allocate averagers for                     |
+
+**State (Set/Reset)**: No parameters \- resets the averages.
 
 ### Pulse Detector (Type 0x0B)
 
@@ -2744,23 +2762,62 @@ Detects pulses (peaks above a threshold for a minimum width) in the input data.
 | Byte | Field                 | Size     | Description                                                        |
 | :--- | :-------------------- | :------- | :----------------------------------------------------------------- |
 | 0    | Length                | uint8\_t | Length of input data in bytes                                       |
-| 1    | Trigger Mode          | uint8\_t | Trigger output mode                                                |
-| 2    | Output Mode           | uint8\_t | What to output when pulse detected                                 |
-| 3-6  | Threshold             | 4 bytes  | Minimum value for pulse detection                                  |
+| 1    | Trigger Mode          | uint8\_t | `0` \= trigger on width (only defined mode)                        |
+| 2    | Output Mode           | uint8\_t | `0` \= width of pulse, `1` \= area (sum) of pulse, `2` \= peak of pulse, `3` \= 0x01 on detection. Mode `3` postdates the base firmware filter table but is supported on current firmware (1.7.x) — the SDKs send it with no version gate. |
+| 3-6  | Threshold             | 4 bytes  | Minimum value for pulse detection (int32)                          |
 | 7-8  | Width                 | uint16\_t | Minimum pulse width in samples                                    |
+
+### Punch Detector (Type 0x04) — *firmware-only*
+
+Detects punch-shaped acceleration curves in the input data.
+
+| Byte | Field                  | Size     | Description                                                       |
+| :--- | :--------------------- | :------- | :----------------------------------------------------------------- |
+| 0    | Offset                 | uint8\_t | Offset in bytes from beginning of input data                       |
+| 1    | Length                 | uint8\_t | Length of input data in bytes                                       |
+| 2    | Latency                | uint8\_t | Samples to wait after a punch before looking for a new punch       |
+| 3-4  | Delta                  | uint16\_t | How far the input must go below zero before it's considered a punch |
+| 5-6  | Punch Area Threshold   | uint16\_t | Minimum size of a punch acceleration curve                        |
+| 7-8  | Punch Start Threshold  | uint16\_t | Minimum positive value before considering a punch to begin        |
+
+### Peak Detector (Type 0x05) — *firmware-only*
+
+Detects local maxima or minima in the input data stream.
+
+| Byte | Field           | Size     | Description                                                                      |
+| :--- | :-------------- | :------- | :------------------------------------------------------------------------------- |
+| 0    | Look Ahead      | uint8\_t | Number of samples to look ahead for a bigger peak                                |
+| 1    | Looking For Max | uint8\_t | 0 \= detect min peaks, else \= detect max peaks                                  |
+| 2    | Extra Peak Width| uint8\_t | Number of samples to sum on both sides of the peak (becomes output value)        |
+| 3-6  | Delta           | 4 bytes  | Minimum delta that must occur before a peak is considered                         |
+| 7    | Offset          | uint8\_t | Offset in bytes from beginning of input data                                     |
+| 8    | Length          | uint8\_t | Length of input data in bytes                                                     |
+| 9    | Is Signed       | uint8\_t | 0 \= unsigned input, else \= signed input                                        |
+
+### Quaternion Average (Type 0x1A) — *firmware-only*
+
+Recursive average of quaternion data.
+
+| Byte | Field         | Size     | Description       |
+| :--- | :------------ | :------- | :----------------- |
+| 0    | Average Depth | uint8\_t | Depth of average   |
 
 ### Comparator (Type 0x06)
 
 Compares input data against one or more reference values and only passes data that satisfies the comparison.
 
-**Single Comparator** (firmware < 1.2.3):
+**Single Comparator** (7-byte config; the only form on firmware < 1.2.3):
 
-| Byte | Field      | Size     | Description                                                                         |
-| :--- | :--------- | :------- | :---------------------------------------------------------------------------------- |
-| 0    | Is Signed  | uint8\_t | 0 \= unsigned comparison, 1 \= signed comparison                                   |
-| 1    | Operation  | uint8\_t | 0 \= EQ, 1 \= NEQ, 2 \= LT, 3 \= LTE, 4 \= GT, 5 \= GTE                         |
-| 2    | (reserved) | uint8\_t | Unused                                                                              |
-| 3-6  | Reference  | 4 bytes  | Reference value to compare against                                                  |
+| Byte    | Field       | Size    | Description                                                                          |
+| :------ | :---------- | :------ | :------------------------------------------------------------------------------------ |
+| 0 [0]   | Is Signed   | 1 bit   | 0 \= unsigned comparison, 1 \= signed comparison                                     |
+| 0 [1]   | Data Length Enable | 1 bit | 1 \= bits 2-3 specify the data length, 0 \= default length (4 bytes)             |
+| 0 [2-3] | Data Length | 2 bits  | Data value length (0 \= 1 byte, 3 \= 4 bytes); only read when bit 1 is set           |
+| 1       | Operation   | uint8\_t | 0 \= EQ, 1 \= NEQ, 2 \= LT, 3 \= LTE, 4 \= GT, 5 \= GTE                          |
+| 2       | (reserved)  | uint8\_t | Unused                                                                               |
+| 3-6     | Reference   | 4 bytes  | Reference value to compare against (int32 or uint32 per the sign bit)               |
+
+The SDKs write byte 0 as a plain `0`/`1` signed flag, which is the bitfield with the length bits disabled. The firmware tells the two comparator forms apart by **config length**: the single form is always 7 bytes, the multi-value form is 1 + 4·N bytes (5, 9, or 13) — the two can never collide.
 
 **Multi-Value Comparator** (firmware >= 1.2.3):
 
@@ -2770,7 +2827,7 @@ Compares input data against one or more reference values and only passes data th
 | 0 [1-2]  | Length     | 2 bits  | Data length encoding                                                                                      |
 | 0 [3-5]  | Operation  | 3 bits  | 0 \= EQ, 1 \= NEQ, 2 \= LT, 3 \= LTE, 4 \= GT, 5 \= GTE                                               |
 | 0 [6-7]  | Mode       | 2 bits  | 0 \= Absolute (return data as-is), 1 \= Reference (return matched ref), 2 \= Zone (return ref index), 3 \= Binary (return 1/0) |
-| 1-12     | References | 1 byte each | Buffer processor (filter) IDs of the input sources, one byte each, up to 12 (matches `FuseConfig.references[12]` in MetaWear-SDK-Cpp) |
+| 1-12     | References | 12 bytes | Up to 3 reference values (4 bytes each, little-endian)                                                  |
 
 ### RMS / RSS (Type 0x07)
 
@@ -2801,6 +2858,7 @@ The math operations are:
 
 | Value | Operation | Formula             |
 | :---- | :-------- | :------------------ |
+| 0     | No-op     | (no operation)      |
 | 1     | Add       | input + rhs         |
 | 2     | Multiply  | input × rhs        |
 | 3     | Divide    | input / rhs         |
@@ -2817,10 +2875,10 @@ The math operations are:
 
 Delays data by a fixed number of samples (FIFO buffer).
 
-| Byte | Field    | Size     | Description                   |
-| :--- | :------- | :------- | :---------------------------- |
-| 0    | Length   | uint8\_t | Length of each sample in bytes |
-| 1    | Bin Size | uint8\_t | Number of samples to buffer    |
+| Byte     | Field    | Size     | Description                                                    |
+| :------- | :------- | :------- | :-------------------------------------------------------------- |
+| 0 [0-3]  | Length   | 4 bits   | Data length minus 1 (0 \= 1 byte … 15 \= 16 bytes)             |
+| 1        | Bin Size | uint8\_t | Number of samples to delay by                                   |
 
 ### Threshold (Type 0x0D)
 
@@ -2843,7 +2901,9 @@ Detects when data changes by a specified magnitude from the last reported value.
 | 0 [0-1]  | Length     | 2 bits  | Data length encoding                                                                                             |
 | 0 [2]    | Is Signed  | 1 bit   | 0 \= unsigned, 1 \= signed                                                                                      |
 | 0 [3-5]  | Mode       | 3 bits  | 0 \= Absolute (output when delta exceeded), 1 \= Differential (output the difference), 2 \= Binary (output 1/\-1) |
-| 1-4      | Magnitude  | 4 bytes | Minimum change required to trigger output                                                                        |
+| 1-4      | Magnitude  | 4 bytes | Minimum change required to trigger output (uint32)                                                               |
+
+**State (Set/Reset)**: Bytes 1-4 \= the internal "previous value" (int32).
 
 ### Time (Type 0x08)
 
@@ -2851,26 +2911,30 @@ Periodically passes the latest data sample, effectively downsampling by time.
 
 | Byte     | Field  | Size    | Description                                                  |
 | :------- | :----- | :------ | :----------------------------------------------------------- |
-| 0 [0-2]  | Length | 3 bits  | Data length encoding                                          |
-| 0 [3-5]  | Mode   | 3 bits  | Output mode                                                   |
+| 0 [0-2]  | Length | 3 bits  | Data length minus 1 (0 \= 1 byte … 7 \= 8 bytes)             |
+| 0 [3-5]  | Mode   | 3 bits  | 0 \= Absolute output, 1 \= Differential output, 2 \= Passthrough output (pass variable-length input to output) |
 | 1-4      | Period | uint32\_t | Time period in ms between outputs                           |
 
 ### Buffer (Type 0x0F)
 
 Stores the latest sample for on-demand retrieval via the **State** register.
 
-| Byte     | Field  | Size   | Description          |
-| :------- | :----- | :----- | :------------------- |
-| 0 [0-4]  | Length | 5 bits | Data length in bytes |
+| Byte     | Field  | Size   | Description                                            |
+| :------- | :----- | :----- | :------------------------------------------------------ |
+| 0 [0-4]  | Length | 5 bits | Buffer length minus 1 (0 \= 1 byte … 16 \= 17 bytes)   |
+
+**State (Set/Get)**: the buffer contents. A Set's length must be ≤ the configured buffer length; a Get returns exactly the configured buffer length.
 
 ### Packer (Type 0x10)
 
 Packs multiple data samples into a single BLE notification to reduce overhead.
 
-| Byte     | Field  | Size   | Description                     |
-| :------- | :----- | :----- | :------------------------------ |
-| 0 [0-4]  | Length | 5 bits | Length of each sample in bytes  |
-| 1 [0-4]  | Count  | 5 bits | Number of samples to pack       |
+| Byte     | Field  | Size   | Description                                            |
+| :------- | :----- | :----- | :------------------------------------------------------ |
+| 0 [0-4]  | Length | 5 bits | Input data length minus 1 (0 \= 1 byte … 16 \= 17 bytes) |
+| 1 [0-4]  | Count  | 5 bits | Number of input vectors to pack minus 1 (0 \= 1 … 16 \= 17). An internal buffer of Length × Count is allocated; the output fires once per Count inputs. Accumulated buffers larger than the max payload (17 bytes) are truncated. |
+
+**State (Set)**: no parameters — clears any accumulated inputs in the buffer.
 
 ### Accounter (Type 0x11)
 
@@ -2878,9 +2942,11 @@ Adds a timestamp or counter to each data sample.
 
 | Byte     | Field    | Size   | Description                                                  |
 | :------- | :------- | :----- | :----------------------------------------------------------- |
-| 0 [0-3]  | Mode     | 4 bits | 0 \= Add counter, 1 \= Add timestamp                        |
-| 0 [4-5]  | Length   | 2 bits | Account data length                                           |
-| 1 [0-3]  | Prescale | 4 bits | Prescaler for the counter/timer                               |
+| 0 [0-3]  | Mode     | 4 bits | 0 \= Count Mode (upcounter prepended to input), 1 \= Time Mode (system timer prepended to input) |
+| 0 [4-5]  | Length   | 2 bits | Accounting value length minus 1 (0 \= 1 byte, 3 \= 4 bytes)   |
+| 1 [0-3]  | Prescale | 4 bits | Timer prescaler — the time value is right-shifted by this amount before being prepended. The time value has the same units as the Logging module's Time register (1 tick \= 48/32768 s). |
+
+**State (Set)**: no parameters — clears the count value.
 
 ### Fuser (Type 0x1B)
 
@@ -2888,8 +2954,8 @@ Combines data from multiple sources. Waits until all inputs have new data, then 
 
 | Byte     | Field      | Size    | Description                                               |
 | :------- | :--------- | :------ | :-------------------------------------------------------- |
-| 0 [0-3]  | Count      | 4 bits  | Number of input sources                                    |
-| 1-12     | References | 12 bytes| Filter IDs of the input sources (up to 3, 4 bytes each)   |
+| 0 [0-4]  | Count      | 5 bits  | Number of filter streams to fuse into the primary stream (the C++ SDK's `FuseConfig` writes only the low 4 bits; the firmware spec reserves 5) |
+| 1+       | References | 1 byte each | Array of buffer processor (filter) IDs to fuse into the stream, **one ID per byte**, up to 12 |
 
 ## Workflow Examples
 
