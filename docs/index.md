@@ -19,13 +19,12 @@ Select your MetaSensor from the table below to continue:
 
 | Name                        | Battery             | Size              | Memory              | Acc | Gyro | Mag | Temp     | Baro | Light |
 | :-------------------------- | :------------------ | :---------------- | :------------------ | :-- | :--- | :-- | :------- | :--- | :---- |
-| [MetaMotionRL](metamotion-rl.md) | 100mAh rechargeable | 17mm x 25mm x 5mm | 8MB (~0.5M entries) | X   | X    | X   | on-board |      |       |
-| [MetaMotionS](metamotion-s.md)   | 100mAh rechargeable | 17mm x 25mm x 5mm | 512MB (30M entries) | X   | X    | X   | X        | X    | X     |
+| [MetaMotionRL](metamotion-rl.md) | 100mAh rechargeable | 17mm x 25mm x 5mm | 8MB (~1M entries) | X   | X    | X   | on-board |      |       |
+| [MetaMotionS](metamotion-s.md)   | 100mAh rechargeable | 17mm x 25mm x 5mm | 512MB (~67M entries) | X   | X    | X   | X        | X    | X     |
 
 ---
 
 ## Resources
 
-- **[API Specification](api-specification.md)** — Complete BLE serial protocol, module registers, data processor filters, sensor fusion modes, and board model reference.
-- **[Protocol Reference](protocol-reference.md)** — Byte-level protocol details for the MetaWear BLE serial protocol.
+- **[API Specification](api-specification.md)** — The complete MetaWear BLE serial protocol: module registers, byte-level wire reference, data processor filters, sensor fusion modes, and board model reference.
 - **[MbientLab Store](https://mbientlab.com)** — Purchase MetaSensors and accessories.

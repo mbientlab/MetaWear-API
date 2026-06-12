@@ -2,6 +2,8 @@
 
 MetaWear API 1.0.0 Specification.
 
+This document is the complete reference for the MetaWear BLE serial protocol: the module and register maps, plus the byte-level wire details (command byte arrays, config bit fields, scale factors, and response parsing) needed to implement the protocol from scratch in any language. Wire-level details for each module appear in a **Wire-Level Reference** subsection at the end of that module's chapter.
+
 ## Bluetooth Low Energy
 
 MetaSensors (MetaWears or MetaWear sensors) measure movement (accelerometer, gyroscope, magnetometer, sensor fusion), temperature, air pressure, and present this via the [**GATT**](https://bluetoothle.wiki/gatt) connection.
@@ -82,7 +84,7 @@ The following **Modules** are available:
 | Settings           | `0x11` | Bluetooth settings such as device name or TX power           | Active     |
 | Barometer          | `0x12` | BMP280 pressure sensor                                       | Active     |
 | Gyro               | `0x13` | BMI160 or BMI270 rotational (angular velocity) sensor        | Active     |
-| Ambient Light      | `0x14` |                                                              | Deprecated |
+| Ambient Light      | `0x14` | LTR-329ALS ambient light sensor (MMS)                        | Active     |
 | Magnetometer       | `0x15` | BMM150 magnetic field sensor                                 | Active     |
 | Humidity           | `0x16` |                                                              | Deprecated |
 | Color Detection    | `0x17` |                                                              | Deprecated |
@@ -129,6 +131,102 @@ The discovery process is:
 
 The **Implementation ID** identifies which hardware variant is present (e.g., BMI160 vs BMI270 for the accelerometer), and the **Revision** indicates the firmware revision for that module. Together they determine which registers are available and how data should be interpreted.
 
+
+#### Board Initialization Sequence (Wire-Level)
+
+1. Enable notifications on the notify characteristic.
+2. Read each Device Info GATT characteristic in order (firmware, model, hardware, manufacturer, serial).
+3. For each module in `MODULE_DISCOVERY_CMDS` list, send:
+   ```
+   [module_id, 0x80]   <- READ_REGISTER(0x00) = info register
+   ```
+   The board responds with `[module_id, 0x80, implementation_byte, revision_byte, ...]`.
+4. After all modules respond, call `init_*_module()` for each present module.
+5. Read logging time signal (module 0x0B, register 0x84) and set reference epoch.
+
+Module discovery order:
+```
+SWITCH, LED, ACCELEROMETER, TEMPERATURE, GPIO, IBEACON, HAPTIC,
+DATA_PROCESSOR, EVENT, LOGGING, TIMER, I2C, MACRO, SETTINGS,
+BAROMETER, GYRO, AMBIENT_LIGHT, MAGNETOMETER, HUMIDITY,
+SENSOR_FUSION, DEBUG
+```
+
+Model numbers (from `module_number` string in Device Info "model number" characteristic):
+```
+"0" -> MetaWear R
+"1" -> MetaWear RG  (or RPro if barometer + ambient light present)
+"2" -> MetaWear C   (or CPro if magnetometer present, or MetaEnv if humidity present)
+"3" -> MetaHealth
+"4" -> MetaTracker
+"5" -> MetaMotion R (or RL if no ambient light)
+"6" -> MetaMotion C
+"8" -> MetaMotion S
+```
+
+Hardware revisions (from `hardware_revision` string, characteristic `0x2A27`) shipped per model:
+```
+"5" -> r0.1, r0.2, r0.3, r0.4, r0.5      (MetaMotion R / RL)
+"8" -> r0.1                              (MetaMotion S)
+```
+Some firmware reports the bare `0.X` form without the leading `r`; treat both forms as equivalent.
+
+#### Example: MetaMotion RL Module Map
+
+The table below shows the **Implementation ID** and **Revision** reported by each module on a **MetaMotion RL (MMRL)** board. Modules marked *Not present* do not respond to the Module Info read on this board.
+
+| Module             | Opcode | Implementation | Revision    |
+| :----------------- | :----- | :------------- | :---------- |
+| Switch             | `0x01` | 0              | 0           |
+| LED                | `0x02` | 0              | 1           |
+| Accelerometer      | `0x03` | 1              | 2           |
+| Temperature        | `0x04` | 1              | 0           |
+| GPIO               | `0x05` | 0              | 2           |
+| iBeacon            | `0x07` | 0              | 0           |
+| Haptic             | `0x08` | 0              | 0           |
+| Data Processor     | `0x09` | 0              | 3           |
+| Event              | `0x0A` | 0              | 0           |
+| Logging            | `0x0B` | 0              | 3           |
+| Timer              | `0x0C` | 0              | 0           |
+| Serial Passthrough | `0x0D` | 0              | 1           |
+| Macro              | `0x0F` | 0              | 2           |
+| Settings           | `0x11` | 0              | 10          |
+| Barometer          | `0x12` | —              | Not present |
+| Gyro               | `0x13` | 0              | 1           |
+| Ambient Light      | `0x14` | —              | Not present |
+| Magnetometer       | `0x15` | 0              | 2           |
+| Humidity           | `0x16` | —              | Not present |
+| Sensor Fusion      | `0x19` | 0              | 3           |
+| Debug              | `0xFE` | 0              | 6           |
+
+#### Example: MetaMotion S Module Map
+
+The table below shows the **Implementation ID** and **Revision** reported by each module on a **MetaMotion S (MMS)** board. Modules marked *Not present* do not respond to the Module Info read on this board.
+
+| Module             | Opcode | Implementation | Revision    |
+| :----------------- | :----- | :------------- | :---------- |
+| Switch             | `0x01` | 0              | 0           |
+| LED                | `0x02` | 0              | 1           |
+| Accelerometer      | `0x03` | 4              | 0           |
+| Temperature        | `0x04` | 1              | 0           |
+| GPIO               | `0x05` | 0              | 2           |
+| iBeacon            | `0x07` | 0              | 0           |
+| Haptic             | `0x08` | 0              | 0           |
+| Data Processor     | `0x09` | 0              | 3           |
+| Event              | `0x0A` | 0              | 0           |
+| Logging            | `0x0B` | 0              | 3           |
+| Timer              | `0x0C` | 0              | 0           |
+| Serial Passthrough | `0x0D` | 0              | 1           |
+| Macro              | `0x0F` | 0              | 2           |
+| Settings           | `0x11` | 0              | 10          |
+| Barometer          | `0x12` | 0              | 0           |
+| Gyro               | `0x13` | 1              | 0           |
+| Ambient Light      | `0x14` | 0              | 0           |
+| Magnetometer       | `0x15` | 0              | 2           |
+| Humidity           | `0x16` | —              | Not present |
+| Sensor Fusion      | `0x19` | 0              | 3           |
+| Debug              | `0xFE` | 0              | 6           |
+
 ### Packed Data
 
 Several sensor modules (Accelerometer, Gyroscope, Magnetometer) provide a **Packed Data** register that sends three consecutive XYZ samples in a single 18-byte notification instead of one 6-byte sample at a time.
@@ -167,7 +265,7 @@ For example, when sending the following command bytes to the MetaWear **Command 
 
 The MetaWear will turn on the accelerometer and immediately start sending orientation data to the smartphone or computer.
 
-For example, when sending the following command bytes to the MetaWear **Command Characteristic** `[0x04, 0x81, 0x00`\]:
+For example, when sending the following command bytes to the MetaWear **Command Characteristic** \[`0x04, 0x81, 0x00`\]:
 
 * `0x04` is the **Module** **Opcode** for the temperature sensor  
 * `0x01` is the **Address** for the temperature sensor data (`0x81` means we want to read it)  
@@ -198,6 +296,66 @@ For example, you may receive the following data: \[`0x03, 0x11, 0x07`\] where:
 * `0x03` is the **Module** **Opcode** for the accelerometer  
 * `0x11` is the **Address** for the orientation data register  
 * `0x07` is the 1 byte **Value** that represents the `FACE_UP_LANDSCAPE_RIGHT` orientation
+
+
+### Subscribing to Register Notifications
+
+Subscribing to the GATT **Notification Characteristic** (`326A9006`) only opens the transport — it does not, by itself, cause any register to emit data. Every notifiable register (Mode **N** in the module tables) is silent until it is individually switched on.
+
+To turn a register's notifications on or off, **write a single byte to that same register**: `0x01` to enable, `0x00` to disable.
+
+| Action                              | Command               |
+| :---------------------------------- | :-------------------- |
+| Subscribe to switch presses         | \[`0x01, 0x01, 0x01`\] |
+| Unsubscribe from the switch         | \[`0x01, 0x01, 0x00`\] |
+| Subscribe to accelerometer data     | \[`0x03, 0x04, 0x01`\] |
+| Subscribe to quaternion output      | \[`0x19, 0x07, 0x01`\] |
+
+Three details commonly trip up new implementations:
+
+1. **Subscribing is not the same as starting the sensor.** Streaming sensor data typically requires all three of: the notify enable on the data register (e.g. \[`0x03, 0x04, 0x01`\]), the module's interrupt enable register (e.g. \[`0x03, 0x02, 0x01, 0x00`\]), and the module's power/start command (e.g. \[`0x03, 0x01, 0x01`\]). Data flows only when all three are active.
+2. **Dynamically created resources use a dedicated Notify Enable register instead.** Timers, data processor filters, and macros multiplex many instances over a single notification register, so they expose a separate enable register that takes \[ID, enable\]: e.g. Timer Notify Enable \[`0x0C, 0x07, timer_id, 0x01`\] or Data Processor Notification Enable \[`0x09, 0x07, filter_id, 0x01`\].
+3. **Subscriptions live on the board, not the connection.** Notify enables persist across BLE disconnects, so a reconnecting host may immediately receive notifications set up in a previous session. Disable unwanted subscriptions (or reset the device state) on connect.
+
+### Wire-Level Packet Format
+
+All commands are written to a single GATT characteristic. All responses (notifications)
+arrive on a single notify characteristic.
+
+```
+Service UUID:        0x326a9000-85cb-9195-d9dd-464cfbbae75a
+Command char UUID:   0x326a9001-85cb-9195-d9dd-464cfbbae75a   (write without response, or with response for MACRO commands)
+Notify char UUID:    0x326a9006-85cb-9195-d9dd-464cfbbae75a   (subscribe for notifications)
+```
+
+Device Info service (standard BLE 0x180A):
+```
+Firmware revision:   0x2A26
+Model number:        0x2A24
+Hardware revision:   0x2A27
+Manufacturer:        0x2A29
+Serial number:       0x2A25
+```
+
+#### Packet Format
+
+Every command and every notification follows the same two- or three-byte header:
+
+```
+Byte 0: module_id
+Byte 1: register_id  (bit 7 = 0x80 set means "READ" request/response)
+Byte 2: data_id      (only present for signals that have an ID, e.g. timer, logger entries)
+Bytes 3+: payload
+```
+
+Macros are the only commands written **with** response; everything else uses
+write-without-response.
+
+The READ modifier:
+```
+#define READ_REGISTER(x)   (0x80 | x)
+#define CLEAR_READ(x)      (0x3f & x)
+```
 
 ## 0x01 \- Switch Module
 
@@ -235,7 +393,7 @@ Depending on the **Mode**, you can create a pattern that determines how bright t
 
 | Setting     | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | :---------- | :------ | :--- | :--- | :--- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Module Info | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 1 (uint8\_t) Byte 2: Channel Count (uint8\_t) Byte 3: Secondary Mode Length (uint8\_t)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Module Info | `0x00`  | R    |      | 3    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 1 (uint8\_t) Byte 2: Channel Count (uint8\_t)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | Play        | `0x01`  | RW   | 1    | 1    | Byte 0:  Value `0x00` \= Pause pattern Value `0x01` \= Play pattern Value `0x02` \= Autoplay                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Stop        | `0x02`  | RW   | 1    | 1    | Byte 0:  Value `0x00` \= Stop pattern Value `0x01` \= Stop and Reset Channels                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Mode        | `0x03`  | RW   | 18   | 18   | For a Write: Byte 0: Channel: 0: G, 1: R, 2: B Byte 1: Mode Mode (0x00) "Solid" (no pattern) Mode (0x01) "Blink" pattern: Byte 2: On Intensity (0-31) Byte 3: Off Intensity (0-31) Byte 4-5: Time On (ms) Byte 6-7: Time Period (ms) Byte 8-9: Time Offset (ms) Byte 10: Repeat Count (0-254, 255: Forever) Mode (0x02) "Flash" patter: Byte 2: On Intensity (0-31) Byte 3: Off Intensity (0-31) Byte 4-5: Time Rise (ms) Byte 6-7: Time On (ms) Byte 8-9: Time Fall (ms) Byte 10-11: Time Period (ms) Byte 12-13: Delayed Start Time (ms) Byte 14: Repeat Count (0-254, 255: Forever) For a Read: Input:  Byte 0: Channel Output:  Byte 0-17: Matches Write format |
@@ -243,8 +401,8 @@ Depending on the **Mode**, you can create a pattern that determines how bright t
 For example, to stop and clear the LED, the command is \[`0x02, 0x02, 0x01`\].
 
 * `0x02` is the **Opcode**  
-* `0x03` is the **Stop Setting Register**  
-* `0x00` is the **Byte 0** of the **Value**, it means Stop when the value is 0
+* `0x02` is the **Stop Setting Register**  
+* `0x01` is the **Byte 0** of the **Value**, it means Stop and Reset Channels
 
 For example, to Flash the LED, the command is \[`0x02, 0x03, 0x00, 0x02, 0x1f, 0x00, 0x00, 0x00, 0x32, 0x00, 0x00, 0x00, 0xf4, 0x01, 0x00, 0x00, 0x0a`\].
 
@@ -261,6 +419,51 @@ For example, to Flash the LED, the command is \[`0x02, 0x03, 0x00, 0x02, 0x1f, 0
 * `0x00 0x00` is the **Byte 12-13** of the **Value** is how long to delay the pattern (0 ms)  
 * `0x0a` is the **Byte 14** of the **Value** is how many times the pattern should be repeated (10 times)
 
+
+### Wire-Level Reference: LED
+
+Register opcodes:
+```
+LED_PLAY   = 0x01
+LED_STOP   = 0x02
+LED_CONFIG = 0x03
+```
+
+#### Write LED Pattern
+```
+[0x02, 0x03, color, 0x02, <13 bytes MblMwLedPattern>]
+```
+`color` is an enum: 0=Green, 1=Red, 2=Blue (from `MblMwLedColor`).
+
+`MblMwLedPattern` (13 bytes, packed):
+```
+uint8_t  high_intensity      // 0..31
+uint8_t  low_intensity       // 0..31
+uint16_t rise_time_ms
+uint16_t high_time_ms
+uint16_t fall_time_ms
+uint16_t pulse_duration_ms
+uint16_t delay_time_ms       // only if revision >= 1 (DELAYED_REVISION)
+uint8_t  repeat_count        // 0xFF = indefinite (use 0xFF, not 0; 0 causes undefined behaviour on firmware)
+```
+Total command: 17 bytes.
+
+#### Play / Pause / Stop
+```
+Play:          [0x02, 0x01, 0x01]
+Autoplay:      [0x02, 0x01, 0x02]
+Pause:         [0x02, 0x01, 0x00]
+Stop:          [0x02, 0x02, 0x00]
+Stop+Clear:    [0x02, 0x02, 0x01]
+```
+
+#### Required sequence
+Always send **Stop+Clear before writing a new pattern**. The firmware does not reset LED state on BLE reconnection; stale patterns from a previous session persist until explicitly cleared.
+
+```
+Stop+Clear  →  WritePattern (per channel)  →  Play
+```
+
 ## 0x03 \- Accelerometer Module
 
 The **Module Opcode** is `0x03`.
@@ -273,10 +476,10 @@ Acceleration is measured in units of gravities (g) or units of m/s2. One g unit 
 
 The accelerometer settings such as the range, the power mode, or the sampling rate are available via the various **Setting** registers.
 
-Because the MMS and the MMRL have different accelerometers, the **Module Info Setting** determines which accelerometer is available:
+Because the MMS and the MMRL have different accelerometers, the **Module Info Setting** determines which accelerometer is available. The variant is identified by the **Implementation ID** (Byte 0 of the Module Info register):
 
-* Revision **Value** 0 \= BOSCH BMI270  
-* Revision **Value** 2 \= BOSCH BMI160
+* Implementation ID **Value** 1 \= BOSCH BMI160  
+* Implementation ID **Value** 4 \= BOSCH BMI270
 
 The **Accelerometer Module** exposes almost all of the registers of the BMI160 and the BMI270 via the **Setting** registers. Refer to their datasheets for the definition of the exposed registers such as PMU\_STATUS or ACC\_CONF:
 
@@ -300,11 +503,11 @@ For the BMI160:
 | Motion Config                  | 0x0A    | RW   | 4    | 4    | Configures the motion mode. **Read/Write**: To the corresponding BMI160 Register: Byte 1 \- 4: *INT\_MOTION* See the datasheet                                                                                                                                                                                                                                                        |
 | Motion Interrupt               | 0x0B    | N    |      | 1    | Accelerometer motion data. **Notify**: To the corresponding BMI160 Register: Byte 1: *INT\_STATUS* \- Notification Bitmask: Bit 0: Significant Motion Int Bit 1: Any Motion Int Bit 2: No Motion Int Bit 3: Any Motion First X Bit 4: Any Motion First Y Bit 5: Any Motion First Z Bit 6: Any Motion Sign                                                                             |
 | Tap Interrupt Enable           | 0x0C    | RW   | 2    | 1    | Turn the tap ready interrupt ON/OFF. **Write**: Byte 1: Enable Bit Mask Bit 0: Double Tap Bit 1: Single Tap Byte 2: Disable Bit Mask Bit 0: Double Tap Bit 1: Single Tap **Read**: Enabled Bit Mask                                                                                                                                                                                   |
-| Tap Config                     | 0x0D    | RW   | 2    |      | Configures the tap mode. **Read/Write**: To the corresponding BMI160 Register: Byte 1 \- 2: *INT\_TAP* See the datasheet                                                                                                                                                                                                                                                              |
+| Tap Config                     | 0x0D    | RW   | 2    | 2    | Configures the tap mode. **Read/Write**: To the corresponding BMI160 Register: Byte 1 \- 2: *INT\_TAP* See the datasheet                                                                                                                                                                                                                                                              |
 | Tap Interrupt                  | 0x0E    | N    |      | 1    | Accelerometer tap data. **Notify**: To the corresponding BMI160 Register Byte 1: *INT\_STATUS* \- Notification Bitmask: Bit 0: Double Tap Int Bit 1: Single Tap Int Bit 2: Tap First X Bit 3: Tap First Y Bit 4: Tap First Z Bit 5: Tap Sign                                                                                                                                          |
 | Orient Interrupt Enable        | 0x0F    | RW   | 2    | 1    | Turn the orientation ready interrupt ON/OFF. **Write**: Byte 1: Enable Bit Mask Bit 0: Orientation Byte 2: Disable Bit Mask Bit 0: Orientation **Read**: Byte 1: Enable Bit Mask                                                                                                                                                                                                      |
 | Orient Config                  | 0x10    | RW   | 2    | 2    | Configures the orientation mode. **Read/Write**: To the corresponding BMI160 Register: Byte 1 \- 2: *INT\_ORIENT* See the datasheet                                                                                                                                                                                                                                                   |
-| Orient Interrupt               | 0x11    | N    |      | 1    | Accelerometer orientation data. **Notify**: To the corresponding BMI160 Register Byte 1: *INT\_STATUS* \- Notification Bitmask: Bit 0: Orientation Int Bit 1-2: Orientation                                                                                                                                                                                                           |
+| Orient Interrupt               | 0x11    | N    |      | 1    | Accelerometer orientation data. **Notify**: To the corresponding BMI160 Register Byte 1: *INT\_STATUS* \- Notification Bitmask: Bit 0: Orientation Int Bit 1-2: Portrait/Landscape Bit 3: Face Up/Down                                                                                                                                                                                                           |
 | Flat Interrupt Enable          | 0x12    | RW   | 2    | 1    | Turn the flatness ready interrupt ON/OFF. **Write**: Byte 1: Enable Bit Mask Bit 0: Flat Byte 2: Disable Bit Mask Bit 0: Flat **Read**: Byte 1: Enable Bit Mask                                                                                                                                                                                                                       |
 | Flat Config                    | 0x13    | RW   | 2    | 2    | Configures the flatness mode. **Read/Write**: To the corresponding BMI160 Register: Byte 1 \- 2: *INT\_FLAT* See the datasheet                                                                                                                                                                                                                                                        |
 | Flat Interrupt                 | 0x14    | N    |      | 1    | Accelerometer flatness data. **Notify**: To the corresponding BMI160 Register Byte 1: *INT\_STATUS* \- Notification Bitmask: Bit 0: Flat Int Bit 1: Z-Axis Orientation (0: Face Up, 1: Face Down) Bit 2: Flat                                                                                                                                                                         |
@@ -329,57 +532,284 @@ For the BMI270:
 | Data Packed Accel Data      | 0x05    | N    | 18   | 18   | Accumulated Vector Output of Register 0x04 **Notify**: Data Value int16\_t (X, Y, Z)\[3\]: Byte 1 \- 2: X: int16\_t Byte 3 \- 4: Y: int16\_t Byte 5 \- 6: Z: int16\_t Byte 7 \- 8: X: int16\_t Byte 9 \- 10: Y: int16\_t Byte 11 \-12: Z: int16\_t Byte 13 \- 14: X: int16\_t Byte 15 \- 16: Y: int16\_t Byte 17 \- 18: Z: int16\_t                                                                                                                                                                                                                                                                                                                    |
 | Feature Enable              | 0x06    | RW   | 2    | 1    | Enabes the different motion features of the BMI270 **Write**: Byte 1: Enable Bit Mask Byte 2: Disable Bit Mask Bit 0: Sig Motion Bit 1: Step Counter Bit 2: Activity Out Bit 3: Wrist Wakeup Bit 4: Wrist Gesture Bit 5: No Motion Bit 6: Any Motion Bit 7: Step Detector **Read**: Byte 1: Enable Bit Mask                                                                                                                                                                                                                                                                                                                                            |
 | Feature Int Enable          | 0x07    | RW   | 2    | 1    | Turn the different feature interrupt ON/OFF. **Write**: Byte 1: Enable Bit Mask Byte 2: Disable Bit Mask Bit 0: Sig Motion Bit 1: Step Counter Bit 2: Activity Out Bit 3: Wrist Wakeup Bit 4: Wrist Gesture Bit 5: No Motion Bit 6: Any Motion Bit 7: Step Detector **Read**: Byte 1: Enable Bit Mask                                                                                                                                                                                                                                                                                                                                                  |
-| Feature Config              | 0x08    | RW   | 17   | 1    | Feature Config Bytes **Write**: Byte 1: Config Bank Index Bit 0: Axis Remap Bit 1: Any Motion Bit 2: No Motion Bit 3: Sig Motion Bit 4: Step Counter 0 Bit 5: Step Counter 1 Bit 6: Step Counter 2 Bit 7: Step Counter 3 Bit 8: Wrist Gesture Bit 9: Wrist Wakeup Byte 2-16: Config Data (See datasheet for BMI270 registers:) Byte 2 \- 3: *GEN\_SET\_1* Byte 4 \- 5: *ANYMO\_1* Byte 6 \- 7: *NOMO\_1* Byte 8: *SIGMO*\_1 Byte 9 \- 10: *STEP\_COUNTER\_1* Byte 11 \- 12: *STEP\_COUNTER\_2* Byte 13 \- 14: *STEP\_COUNTER\_3* Byte 15 \- 16: *STEP\_COUNTER\_4* Byte 17: *WR\_GEST\_1* Byte 17: *WR\_WAKEUP\_1* **Read**: Byte 1: Config Bank Index |
+| Feature Config              | 0x08    | RW   | 3-17 | 1    | Configures **one feature bank per write**. **Write**: Byte 0: Config Bank Index (uint8\_t): `0` \= Axis Remap, `1` \= Any Motion, `2` \= No Motion, `3` \= Sig Motion, `4`-`7` \= Step Counter banks 1-4, `8` \= Wrist Gesture, `9` \= Wrist Wakeup Byte 1+: Config bytes for that bank only. Bank lengths: Axis Remap 2, Any Motion 4, No Motion 4, Sig Motion 2, Step Counter banks 16/16/16/4, Wrist Gesture 8, Wrist Wakeup 12 (see the BMI270 datasheet feature pages for the bit fields). **Read**: Byte 0: Config Bank Index. Verified against MetaWear-SDK-Cpp (`AccBmi270Config.feature_config`, `BMI270_DEFAULT_CONFIG`): wrist gesture and wrist wakeup are separate banks (8 and 9), not adjacent bytes of one blob. |
 | Motion Interrupt            | 0x09    | N    | 1    | 1    | Motion data. **Notify**:  Byte 1 Bit 0: Sig Motion Bit 1: No Motion Bit 2: Any Motion                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Wrist Interrupt             | 0x0a    | N    | 1    | 1    | Wrist data. **Notify**:  Byte 1 Bit 0: Wrist Wear Wakeup Bit 1: Wrist Gesture Bit 2 \- 4: Gesture Code 0 \= Unknown 1 \=  Push Arm Down 2 \=  Pivot Up 3 \=  Wrist Shake/Jiggle 4 \=  Arm Flick In 5 \=  Arm Flick Out                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Step Count Interrupt        | 0x0b    | RN   | 2    | 2    | Step Count data. **Notify/Read**: Bytes 1 \- 2: Step Count uint16\_t                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Activity Interrupt          | 0x0c    | N    | 1    | 1    | Activity data. **Notify**:  Byte 1 Bit 0: Activity Bit 1-2: Activity Code 0 \= Still 1 \= Walking 2 \= Running 3 \= Unknown                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| Temp Enable                 | 0x0d    | W    | 1    |      | Temp Sensor Enable. **Write**: Byte 1: Input Values: 0 \= Off 1 \= On                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Temperature                 | 0x0e    | R    | 2    | 2    | Sensor Temperature. temp \= (1C/512)\*value+23C **Read**: Bytes 0 \- 1: int16\_t in units of (1./512 degC), offset by 23C                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| Offset                      | 0x0f    | RW   | 4    | 4    | Offset compensation for accel. Corresponding to BMI270 Registers below (see datasheet). **Read/Write**: Byte 1: NV\_CONF Byte 2: *OFFSET0* Bit 0 \- 7: off acc x Byte 3: *OFFSET1* Bit 0 \- 7: off acc y Byte 4: *OFFSET2* Bit 0 \- 7: off acc z                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Downsampling                | 0x10    | RW   | 1    | 1    | Configure gyro/acell downsampling rates for FIFO. Corresponding to BMI270 Registers. **Read/Write**: Byte 1: *FIFO\_DOWNS* (see the datasheet) Bit 0 \- 2: gyro fifo down Bit 3: gyro fifo filt data Bit 4 \- 6: acc fifo down Bit 7: acc fifo filt data                                                                                                                                                                                                                                                                                                                                                                                               |
+| Temp Interrupt              | 0x0d    | N    |      |      | Temperature interrupt notification. Defined in firmware but not currently exposed by the SDK.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Temp Enable                 | 0x0e    | W    | 1    |      | Temp Sensor Enable. **Write**: Byte 1: Input Values: 0 \= Off 1 \= On |
+| Temperature                 | 0x0f    | R    | 2    | 2    | Sensor Temperature. temp \= (1C/512)\*value+23C **Read**: Bytes 0 \- 1: int16\_t in units of (1./512 degC), offset by 23C                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Offset                      | 0x10    | RW   | 4    | 4    | Offset compensation for accel. Corresponding to BMI270 Registers below (see datasheet). **Read/Write**: Byte 1: NV\_CONF Byte 2: *OFFSET0* Bit 0 \- 7: off acc x Byte 3: *OFFSET1* Bit 0 \- 7: off acc y Byte 4: *OFFSET2* Bit 0 \- 7: off acc z                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Downsampling                | 0x11    | RW   | 1    | 1    | Configure gyro/acell downsampling rates for FIFO. Corresponding to BMI270 Registers. **Read/Write**: Byte 1: *FIFO\_DOWNS* (see the datasheet) Bit 0 \- 2: gyro fifo down Bit 3: gyro fifo filt data Bit 4 \- 6: acc fifo down Bit 7: acc fifo filt data                                                                                                                                                                                                                                                                                                                                                                                               |
 
-Linear acceleration is represented with the MblMwCartesianFloat struct and the values are in units of Gs. The x, y, and z fields contain the acceleration in that direction.
+### Wire-Level Reference: Accelerometer
 
-Sample data:
+#### Implementation Types
+```
+MBL_MW_MODULE_ACC_TYPE_BMI160 = 1
+MBL_MW_MODULE_ACC_TYPE_BMI270 = 4
+```
 
-## 0x04 \- Temperature Module
+#### BMI160 Register Opcodes
+```
+POWER_MODE                = 0x01
+DATA_INTERRUPT_ENABLE     = 0x02
+DATA_CONFIG               = 0x03
+DATA_INTERRUPT            = 0x04
+DATA_INTERRUPT_CONFIG     = 0x05
+MOTION_INTERRUPT_ENABLE   = 0x09
+MOTION_CONFIG             = 0x0A
+MOTION_INTERRUPT          = 0x0B
+TAP_INTERRUPT_ENABLE      = 0x0C
+TAP_CONFIG                = 0x0D
+TAP_INTERRUPT             = 0x0E
+ORIENT_INTERRUPT_ENABLE   = 0x0F
+ORIENT_CONFIG             = 0x10
+ORIENT_INTERRUPT          = 0x11
+STEP_DETECTOR_INTERRUPT_EN= 0x17
+STEP_DETECTOR_CONFIG      = 0x18
+STEP_DETECTOR_INTERRUPT   = 0x19
+STEP_COUNTER_DATA         = 0x1A
+STEP_COUNTER_RESET        = 0x1B
+PACKED_ACC_DATA           = 0x1C
+```
+
+#### BMI270 Register Opcodes
+```
+POWER_MODE                = 0x01
+DATA_INTERRUPT_ENABLE     = 0x02
+DATA_CONFIG               = 0x03
+DATA_INTERRUPT            = 0x04
+PACKED_ACC_DATA           = 0x05
+FEATURE_ENABLE            = 0x06
+FEATURE_INTERRUPT_ENABLE  = 0x07
+FEATURE_CONFIG            = 0x08
+MOTION_INTERRUPT          = 0x09
+WRIST_INTERRUPT           = 0x0A
+STEP_COUNT_INTERRUPT      = 0x0B
+ACTIVITY_INTERRUPT        = 0x0C
+TEMP_INTERRUPT            = 0x0D
+TEMP_ENABLE               = 0x0E
+TEMP                      = 0x0F
+OFFSET                    = 0x10
+DOWNSAMPLING              = 0x11
+```
+
+#### Commands
+
+**Start / Stop sampling:**
+```
+Start:  [0x03, 0x01, 0x01]
+Stop:   [0x03, 0x01, 0x00]
+```
+
+**Enable / Disable data stream (BMI160):**
+```
+Enable:  [0x03, 0x02, 0x01, 0x00]
+Disable: [0x03, 0x02, 0x00, 0x01]
+```
+
+**Write acceleration config (BMI160 / BMI270):**
+```
+[0x03, 0x03, acc_conf_byte, acc_range_byte]
+```
+`acc_conf_byte` layout — **BMI160**:
+```
+bits 0-3: odr  (MblMwAccBmi160Odr + 1, i.e. 1-indexed)
+bits 4-6: bwp  (2 = normal for ODR >= 12.5 Hz; must be 0 when acc_us is set)
+bit  7:   us   (under-sampling: 1 for ODR < 12.5 Hz, 0 otherwise)
+```
+Reference values:
+```
+0.78125 Hz -> 0x81    12.5 Hz -> 0x25    200 Hz -> 0x29
+  1.5625 Hz -> 0x82    25   Hz -> 0x26    400 Hz -> 0x2A
+   3.125 Hz -> 0x83    50   Hz -> 0x27    800 Hz -> 0x2B
+    6.25 Hz -> 0x84   100   Hz -> 0x28   1600 Hz -> 0x2C
+```
+
+`acc_conf_byte` layout — **BMI270** (different from BMI160):
+```
+bits 0-3: acc_odr          (same 1-indexed codes as BMI160)
+bits 4-6: acc_bwp          (always 2 = normal averaging)
+bit  7:   acc_filter_perf  (1 for ODR >= 12.5 Hz, 0 for ODR < 12.5 Hz)
+```
+Note: bit 7 is **inverted** vs BMI160. BMI270 uses it as a high-performance filter
+enable (not an under-sampling flag). Reference values:
+```
+0.78125 Hz -> 0x21    12.5 Hz -> 0xA5    200 Hz -> 0xA9
+  1.5625 Hz -> 0x22    25   Hz -> 0xA6    400 Hz -> 0xAA
+   3.125 Hz -> 0x23    50   Hz -> 0xA7    800 Hz -> 0xAB
+    6.25 Hz -> 0x24   100   Hz -> 0xA8   1600 Hz -> 0xAC
+```
+
+`acc_range_byte` (BMI160 FSR bitmasks):
+```
++/-2g  -> 0x03    scale = 16384 LSB/g
++/-4g  -> 0x05    scale = 8192  LSB/g
++/-8g  -> 0x08    scale = 4096  LSB/g
++/-16g -> 0x0C    scale = 2048  LSB/g
+```
+`acc_range_byte` (BMI270 FSR bitmasks):
+```
++/-2g  -> 0x00    scale = 16384 LSB/g
++/-4g  -> 0x01    scale = 8192  LSB/g
++/-8g  -> 0x02    scale = 4096  LSB/g
++/-16g -> 0x03    scale = 2048  LSB/g
+```
+
+**Enable / Disable motion interrupt (BMI160):**
+```
+Enable:  [0x03, 0x09, enable_mask, 0x00]
+Disable: [0x03, 0x09, 0x00, disable_mask]
+```
+
+**Enable / Disable tap detection (BMI160):**
+```
+Enable single/double: [0x03, 0x0C, mask, 0x00]
+  mask bit 0 = double tap, mask bit 1 = single tap
+Disable: [0x03, 0x0C, 0x00, 0x03]
+```
+
+**Enable / Disable orientation detection (BMI160):**
+```
+Enable:  [0x03, 0x0F, 0x01, 0x00]
+Disable: [0x03, 0x0F, 0x00, 0x01]
+```
+
+**BMI160 Step detector enable/disable:**
+```
+Enable:  [0x03, 0x17, 0x01, 0x00]
+Disable: [0x03, 0x17, 0x00, 0x01]
+Reset:   [0x03, 0x1B]
+```
+
+**BMI270 Feature enable/disable (using FEATURE_ENABLE and FEATURE_INTERRUPT_ENABLE):**
+```
+Step counter enable:
+  [0x03, 0x07, 0x02, 0x00]   <- interrupt enable
+  [0x03, 0x06, 0x02, 0x00]   <- feature enable
+Step counter disable:
+  [0x03, 0x07, 0x00, 0x02]
+  [0x03, 0x06, 0x00, 0x02]
+
+Step detector enable:
+  [0x03, 0x07, 0x80, 0x00]
+  [0x03, 0x06, 0x80, 0x00]
+Step detector disable:
+  [0x03, 0x07, 0x00, 0x80]
+  [0x03, 0x06, 0x00, 0x80]
+```
+
+**BMI270 Feature config (FEATURE_CONFIG = 0x08):**
+```
+[0x03, 0x08, feature_index, ...config_bytes...]
+```
+Feature indices used:
+```
+axis_remap  = 0
+any_motion  = 1
+no_motion   = 2
+sig_motion  = 3
+step_counter_0..3 = 4..7
+wrist_gesture = 8
+wrist_wakeup  = 9
+```
+
+#### Notification Headers (what the board sends back)
+
+| Register | Description |
+|---|---|
+| [0x03, 0x04] | Accelerometer XYZ data (no ID byte) |
+| [0x03, 0x05] | BMI270 Packed accelerometer data |
+| [0x03, 0x0B] | BMI160 Any/Slow/No-motion interrupt |
+| [0x03, 0x09] | BMI270 Motion interrupt |
+| [0x03, 0x0E] | BMI160 Tap interrupt |
+| [0x03, 0x11] | BMI160 Orientation interrupt |
+| [0x03, 0x19] | BMI160 Step detector |
+| [0x03, 0x1C] | BMI160 Packed accelerometer data |
+| [0x03, 0x0B] | BMI270 Step count interrupt |
+| [0x03, 0x0A] | BMI270 Wrist gesture interrupt |
+| [0x03, 0x0C] | BMI270 Activity interrupt |
+
+#### Response Parsing
+
+**Accelerometer XYZ data** (6 bytes after header):
+```kotlin
+val x = (response[2] or (response[3].toInt() shl 8)).toShort() / scale
+val y = (response[4] or (response[5].toInt() shl 8)).toShort() / scale
+val z = (response[6] or (response[7].toInt() shl 8)).toShort() / scale
+// 'scale' from FSR lookup table above
+```
+
+**Any-motion response** (1 byte, `response[2]`):
+```
+bit 3: x-axis active    (0x1 << (0+3))
+bit 4: y-axis active    (0x1 << (1+3))
+bit 5: z-axis active    (0x1 << (2+3))
+bit 6: sign             (0 = positive, 1 = negative)
+```
+
+**Tap response** (1 byte, `response[2]`):
+```
+bit 0: single tap
+bit 1: double tap
+bit 5: sign (1 = positive)
+```
+
+**Orientation response** (1 byte, `response[2]`):
+```
+MblMwSensorOrientation = ((byte & 0x06) >> 1) + 4 * ((byte & 0x08) >> 3)
+```
+
+**BMI270 Gesture response** (1 byte, `response[2]`):
+```
+type          = byte & 0x03
+gesture_code  = byte >> 2
+```
+
+**BMI270 Activity response** (1 byte, `response[2]`):
+```
+activity = byte >> 1
+```
+
+**Packed accelerometer data** (multiple 6-byte XYZ triplets starting at `response[2]`):
+```
+Each 6-byte block: int16 x, int16 y, int16 z (little-endian)
+```
+
+## 0x04 \- Multichannel Temperature Module
 
 The **Module Opcode** is `0x04`.
 
-The **Temperature Module** allows users to read temperature data from up to three different sources on the MetaWear: an on-die sensor (inside the chip), an on-board thermistor, and an external thermistor that can be connected to the GPIO pins.
+The **Multichannel Temperature Module** allows users to read temperature data from one or more sources on the MetaWear. The module is **multichannel**: each board exposes a different set of temperature channels (for example the nRF on-die sensor, an external thermistor, or the BMP280). The **Module Info** register returns an array of **driver (source) IDs**, one entry per available channel, so the host can discover which sources a given board provides.
 
 Temperature is returned as a signed 16-bit integer (int16\_t) in units of 0.125°C.
 
-The **Temperature** register (`0x01`) requires an index byte in the **Value** field to select which sensor to read from:
+Each channel is addressed by its **channel index** (its position in the Module Info driver-ID array). The driver (source) type for each channel is one of:
 
-* Index `0x00` \= On-die temperature sensor (nRF)
-* Index `0x01` \= On-board thermistor
-* Index `0x02` \= External thermistor (connected via GPIO)
-* Index `0x03` \= BMP280 temperature sensor (Barometer on-chip)
+* `0` \= nRF on-die sensor (`NRF_DIE`)
+* `1` \= External thermistor (`EXT_THERM`)
+* `2` \= BMP280 temperature sensor (`BMP280`, Barometer on-chip)
+* `3` \= On-board / preset thermistor (`PRESET_THERM`)
 
-The **Thermistor Mode** register (`0x05`) is used to configure the external thermistor GPIO pin, data pin, and whether the sensor is active high or active low.
+| Setting     | Address | Mode | Wlen | Rlen | Value                                                                                                                                          |
+| :---------- | :------ | :--- | :--- | :--- | :--------------------------------------------------------------------------------------------------------------------------------------------- |
+| Module Info | `0x00`  | R    |      | 2+   | Byte 0: Module Implementation ID: 1 (uint8\_t) Byte 1: Module Revision: 0 (uint8\_t) Byte 2+: Array of Driver (source) IDs, one per channel    |
+| Temperature | `0x01`  | RN   | 0    | 3    | Byte 0: Channel Index (uint8\_t) Byte 1-2: int16\_t in units of 0.125°C. Data format may be backend-driver specific.                           |
+| Mode        | `0x02`  | RW   | 1+   | 1+   | Byte 0: Driver (channel) Index (uint8\_t) Byte 1+: Mode settings, driver specific                                                              |
 
-| Setting          | Address | Mode | Wlen | Rlen | Value                                                                                                                                     |
-| :--------------- | :------ | :--- | :--- | :--- | :---------------------------------------------------------------------------------------------------------------------------------------- |
-| Module Info      | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                     |
-| Temperature      | `0x01`  | RN   |      | 2    | **Read**: Byte 0: Sensor Index (uint8\_t) **Response**: Byte 0: Sensor Index Byte 1-2: Temperature int16\_t in units of 0.125°C           |
-| Mode             | `0x02`  | RW   | 8    | 8    | Byte 0-7: Temperature sensor mode configuration                                                                                           |
-| Delta Temp       | `0x03`  | N    |      | 4    | Byte 0-3: Temperature delta notification data                                                                                             |
-| Threshold Detect | `0x04`  | N    |      | 4    | Byte 0-3: Temperature threshold detection notification data                                                                               |
-| Thermistor Mode  | `0x05`  | RW   | 3    | 3    | Byte 0: GPIO Analog Pin (uint8\_t) Byte 1: GPIO Data Pin (uint8\_t) Byte 2: Active High/Low (uint8\_t, 0 \= active low, 1 \= active high) |
-
-For example, to read the on-die temperature, the command is \[`0x04, 0x81, 0x00`\]:
+For example, to read the temperature from channel 0, the command is \[`0x04, 0x81, 0x00`\]:
 
 * `0x04` is the **Opcode** for the Temperature module
 * `0x81` is the **Address** `0x01` OR'd with `0x80` for a read
-* `0x00` is the sensor index for the on-die sensor
+* `0x00` is the channel index to read
 
 The response might be \[`0x04, 0x81, 0x00, 0xC8, 0x00`\]:
 
 * `0x04` is the **Opcode**
 * `0x81` is the **Address** with read bit set
-* `0x00` is the sensor index
+* `0x00` is the channel index
 * `0xC8 0x00` is the temperature value (200 in decimal \= 200 × 0.125°C \= 25.0°C)
 
 ## 0x05 \- GPIO Module
@@ -390,39 +820,103 @@ The **GPIO Module** allows users to interact with the General Purpose Input/Outp
 
 Pin change notifications can be configured to send a notification when a digital input pin changes state. The pin change type determines which transitions to monitor (rising edge, falling edge, or both).
 
+> **Logic levels differ between boards.** The MMS (nRF52840) runs its GPIO at **1.8 V logic** (V<sub>IH</sub> min 1.3 V, V<sub>OH</sub> max 1.8 V), while the MMRL (nRF52832) runs at **3 V logic** (V<sub>IH</sub> min 2.1 V, V<sub>OH</sub> max 3.0 V). A 3.3 V peripheral that works on an MMRL pin can damage or misread an MMS pin — level-shift accordingly. Both boards also expose a regulated 3 V supply pin for peripherals.
+
+The analog read registers (`0x06` and `0x07`) accept optional parameters: a virtual pull-up pin, a virtual pull-down pin, a startup delay (in units of 4 µs), and a virtual/spoof pin index. Unused pin parameters are set to `0xFF` and an unused delay is set to `0`. These extra parameters are available on GPIO **Module Revision 2 and later**; earlier revisions accept only the single pin-number byte.
+
 | Setting                              | Address | Mode | Wlen | Rlen | Value                                                                                                                                         |
 | :----------------------------------- | :------ | :--- | :--- | :--- | :-------------------------------------------------------------------------------------------------------------------------------------------- |
-| Module Info                          | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                         |
+| Module Info                          | `0x00`  | R    |      | 2+   | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 2 (uint8\_t) Byte 2+: Array of per-pin feature bitmasks, 1 byte per pin: `0x01` \= Digital I/O, `0x02` \= Analog I/O, `0x04` \= High Current (Open-Drain Pull-Down) |
 | Set Digital Output                   | `0x01`  | W    | 1    |      | Byte 0: Pin Number (uint8\_t) \- Sets the pin HIGH                                                                                            |
 | Clear Digital Output                 | `0x02`  | W    | 1    |      | Byte 0: Pin Number (uint8\_t) \- Sets the pin LOW                                                                                             |
 | Digital In Pull Up                   | `0x03`  | W    | 1    |      | Byte 0: Pin Number (uint8\_t) \- Configures pin as digital input with pull-up resistor                                                        |
 | Digital In Pull Down                 | `0x04`  | W    | 1    |      | Byte 0: Pin Number (uint8\_t) \- Configures pin as digital input with pull-down resistor                                                      |
 | Digital In No Pull                   | `0x05`  | W    | 1    |      | Byte 0: Pin Number (uint8\_t) \- Configures pin as digital input with no pull resistor                                                        |
-| Read Analog Input Absolute Reference | `0x06`  | R    | 1    | 3    | **Read**: Byte 0: Pin Number (uint8\_t) **Response**: Byte 0: Pin Number Byte 1-2: Analog value uint16\_t in mV                               |
-| Read Analog Input Supply Ratio       | `0x07`  | R    | 1    | 3    | **Read**: Byte 0: Pin Number (uint8\_t) **Response**: Byte 0: Pin Number Byte 1-2: Analog value uint16\_t as ratio of supply voltage (0-4095) |
+| Read Analog Input Absolute Reference | `0x06`  | R    | 5    | 3    | **Read**: Byte 0: Pin Number (uint8\_t) Byte 1: Pull-Up GPIO Pin (uint8\_t, `0xFF` \= unused) Byte 2: Pull-Down GPIO Pin (uint8\_t, `0xFF` \= unused) Byte 3: Startup Delay (uint8\_t, delay \= value × 4 µs, `0` \= unused) Byte 4: Virtual/Spoof Pin Index (uint8\_t, `0xFF` \= unused) **Response**: Byte 0: Pin Number Byte 1-2: Analog value uint16\_t in mV |
+| Read Analog Input Supply Ratio       | `0x07`  | R    | 5    | 3    | **Read**: Byte 0: Pin Number (uint8\_t) Byte 1: Pull-Up GPIO Pin (uint8\_t, `0xFF` \= unused) Byte 2: Pull-Down GPIO Pin (uint8\_t, `0xFF` \= unused) Byte 3: Startup Delay (uint8\_t, delay \= value × 4 µs, `0` \= unused) Byte 4: Virtual/Spoof Pin Index (uint8\_t, `0xFF` \= unused) **Response**: Byte 0: Pin Number Byte 1-2: Analog value uint16\_t as a 10-bit ratio of supply voltage (0-1023) |
 | Read Digital Input                   | `0x08`  | R    | 1    | 2    | **Read**: Byte 0: Pin Number (uint8\_t) **Response**: Byte 0: Pin Number Byte 1: Digital Value (0 or 1)                                       |
-| Set Pin Change                       | `0x09`  | RW   | 2    | 2    | Byte 0: Pin Number (uint8\_t) Byte 1: Change Type (uint8\_t, 1 \= Rising, 2 \= Falling, 3 \= Any)                                             |
+| Set Pin Change                       | `0x09`  | RW   | 2    | 2    | Byte 0: Pin Number (uint8\_t) Byte 1: Change Type (uint8\_t, 0 \= Disabled, 1 \= Rising, 2 \= Falling, 3 \= Any)                              |
 | Pin Change Notification              | `0x0A`  | N    |      | 2    | Byte 0: Pin Number (uint8\_t) Byte 1: Pin State (uint8\_t)                                                                                    |
 | Pin Change Notification Enable       | `0x0B`  | W    | 2    |      | Byte 0: Pin Number (uint8\_t) Byte 1: Enable (0 \= disable, 1 \= enable)                                                                      |
+
+
+### Wire-Level Reference: GPIO
+
+#### Register Opcodes
+```
+SET_DO                  = 0x01
+CLEAR_DO                = 0x02
+PULL_UP_DI              = 0x03
+PULL_DOWN_DI            = 0x04
+NO_PULL_DI              = 0x05
+READ_AI_ABS_REF         = 0x06
+READ_AI_ADC             = 0x07
+READ_DI                 = 0x08
+PIN_CHANGE              = 0x09
+PIN_CHANGE_NOTIFY       = 0x0A
+PIN_CHANGE_NOTIFY_ENABLE= 0x0B
+```
+
+#### Commands
+```
+Set digital output high:  [0x05, 0x01, pin]
+Set digital output low:   [0x05, 0x02, pin]
+Enable pull-up on DI:     [0x05, 0x03, pin]
+Enable pull-down on DI:   [0x05, 0x04, pin]
+No pull on DI:            [0x05, 0x05, pin]
+Read analog (abs ref):    [0x05, 0x86, pin]   <- READ_REGISTER(0x06)
+Read analog (ADC):        [0x05, 0x87, pin]   <- READ_REGISTER(0x07)
+Read digital input:       [0x05, 0x88, pin]   <- READ_REGISTER(0x08)
+Configure pin change:     [0x05, 0x09, pin, change_type]
+Enable pin change notify: [0x05, 0x0B, pin, 0x01]
+Disable pin change notify:[0x05, 0x0B, pin, 0x00]
+```
 
 ## 0x08 \- Haptic Module
 
 The **Module Opcode** is `0x08`.
 
-The **Haptic Module** drives the buzzer motor on MetaWear boards that have one (MMS+ or MMRL+). It uses a simple pulse command to vibrate the buzzer for a specified duration at a specified duty cycle.
+The **Haptic Module** drives a vibration motor or piezo buzzer on MetaWear boards that have one (MMS+ or MMRL+). It uses a simple pulse command to drive the actuator for a specified duration at a specified duty cycle. The drive frequency selects the actuator type: **2 kHz** for a vibration motor (ERM) and **4 kHz** for a piezo buzzer.
 
 | Setting     | Address | Mode | Wlen | Rlen | Value                                                                                                                           |
 | :---------- | :------ | :--- | :--- | :--- | :------------------------------------------------------------------------------------------------------------------------------ |
 | Module Info | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                           |
-| Pulse       | `0x01`  | W    | 4    |      | Byte 0: Duty Cycle (uint8\_t, 0-248) Byte 1-2: Pulse Width in ms (uint16\_t) Byte 3: Buzzer (uint8\_t, 0 \= Motor, 1 \= Buzzer) |
+| Pulse       | `0x01`  | W    | 4    | 4    | Byte 0: Duty Cycle (uint8\_t, 0-248) Byte 1-2: Pulse Width in ms (uint16\_t, little-endian) Byte 3: Drive Frequency (uint8\_t, `0` \= 2 kHz, `1` \= 4 kHz). Use 2 kHz for a vibration motor and 4 kHz for a piezo buzzer. |
 
-For example, to pulse the buzzer for 500ms at full duty cycle, the command is \[`0x08, 0x01, 0xF8, 0xF4, 0x01, 0x01`\]:
+For example, to pulse the buzzer for 500ms, the command is \[`0x08, 0x01, 0x7F, 0xF4, 0x01, 0x01`\]:
 
 * `0x08` is the **Opcode** for the Haptic module
 * `0x01` is the **Address** for the Pulse register
-* `0xF8` is the duty cycle (248 \= max)
+* `0x7F` is the duty cycle — for the buzzer, always use `0x7F` (127); the 0-248 duty range applies to the vibration motor only
 * `0xF4 0x01` is 500 in uint16\_t little-endian (500ms)
-* `0x01` selects the buzzer mode
+* `0x01` selects the 4 kHz drive frequency (piezo buzzer)
+
+
+### Wire-Level Reference: Haptic
+
+#### Register Opcodes
+```
+PULSE = 0x01
+```
+
+#### Command
+```
+[0x08, 0x01, duty_cycle_byte, pulse_width_lo, pulse_width_hi, mode]
+```
+
+| Field | Description |
+|---|---|
+| `duty_cycle_byte` | Motor: `floor(dutyCycle% × 248 / 100)`, clamped to 0–248. Buzzer: always `0x7F`. |
+| `pulse_width_lo/hi` | Pulse duration in milliseconds, UInt16 little-endian. |
+| `mode` | `0x00` = ERM haptic motor, `0x01` = piezo buzzer. |
+
+#### Reference test vectors
+```
+Motor 100%, 5000 ms: [0x08, 0x01, 0xF8, 0x88, 0x13, 0x00]
+  0xF8 = 248 (100% duty cycle), 0x1388 = 5000 ms, mode=0x00
+Buzzer, 7500 ms:     [0x08, 0x01, 0x7F, 0x4C, 0x1D, 0x01]
+  0x7F always for buzzer, 0x1D4C = 7500 ms, mode=0x01
+```
 
 ## 0x09 \- Data Processor Module
 
@@ -436,34 +930,313 @@ The filter notification system allows the host to receive processed data. The **
 
 | Setting             | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                                                  |
 | :------------------ | :------ | :--- | :--- | :--- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Module Info         | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                                                                                                                  |
-| Enable              | `0x01`  | RW   | 1    | 1    | Byte 0: Enable (0 \= disable, 1 \= enable global data processor)                                                                                                                                                                       |
-| Add / Create Filter | `0x02`  | RW   | 18   | 18   | **Write**: Byte 0: Source Module ID Byte 1: Source Register ID Byte 2: Source Data Offset Byte 3: Source Data Length Byte 4: Filter Type ID Byte 5-17: Filter-specific configuration **Read (Response)**: Byte 0: Filter ID (uint8\_t) |
-| Filter Notification | `0x03`  | N    |      | 18   | Byte 0: Filter ID (uint8\_t) Byte 1-17: Processed data (format depends on filter type)                                                                                                                                                 |
-| Filter State        | `0x04`  | RW   | 18   | 18   | **Write**: Byte 0: Filter ID Byte 1-17: State data **Read**: Byte 0: Filter ID (input) Byte 1-17: Current state (output)                                                                                                               |
-| Filter Param Modify | `0x05`  | W    | 18   |      | Byte 0: Filter ID (uint8\_t) Byte 1-17: Updated filter parameters                                                                                                                                                                      |
-| Filter Remove       | `0x06`  | W    | 1    |      | Byte 0: Filter ID (uint8\_t) \- Removes the specified filter                                                                                                                                                                           |
-| Notify Enable       | `0x07`  | W    | 1    |      | Byte 0: Filter ID (uint8\_t) Byte 1: Enable (0 \= disable, 1 \= enable notifications)                                                                                                                                                  |
-| Remove All          | `0x08`  | W    |      |      | No value required \- Removes all filters                                                                                                                                                                                               |
+| Module Info                  | `0x00`  | R    |      | 3    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t) Byte 2: Count of Filters Supported (uint8\_t)                                                                                                                                                       |
+| Enable                       | `0x01`  | RW   | 1    | 1    | Byte 0: Enable (0 \= disable, 1 \= enable global data processor)                                                                                                                                                                                                                          |
+| Filter Add / Create          | `0x02`  | RW   | 18   | 18   | **Write**: Byte 0: Source Module ID Byte 1: Source Register ID Byte 2: Source Index (`0xFF` \= no index) Byte 3: Bits 0-4 \= data offset within the source packet; Bits 5-7 \= entry length to match, in bytes, minus 1 (`0`-`7` correspond to 1-8 bytes) Byte 4: Filter Type ID Byte 5-17: Filter-specific configuration **Read**: Byte 0: Filter Unique ID **Response**: matches the write format. A successful write also returns a notification carrying the firmware-assigned Filter Unique ID. |
+| Filter Notification          | `0x03`  | N    | 18   | 18   | Byte 0: Filter Unique ID Byte 1-17: Filter output (format depends on filter type)                                                                                                                                                                                                        |
+| Filter State (Set/Reset/Get) | `0x04`  | RW   | 18   | 18   | Byte 0: Filter Unique ID Byte 1-17: Filter-dependent state parameters                                                                                                                                                                                                                    |
+| Filter Parameter Modify      | `0x05`  | W    | 18   | 18   | Byte 0: Filter Unique ID Byte 1-17: Updated filter parameters (corresponds to Byte 4-17 of Filter Add / Create)                                                                                                                                                                          |
+| Filter Remove                | `0x06`  | W    | 1    | 1    | Byte 0: Filter Unique ID \- Removes the specified filter                                                                                                                                                                                                                                  |
+| Filter Notification Enable   | `0x07`  | W    | 2    |      | Byte 0: Filter Unique ID Byte 1: Enable (0 \= disable, 1 \= enable notifications)                                                                                                                                                                                                         |
+| Remove All Filters           | `0x08`  | W    |      |      | No value required \- Removes all filters                                                                                                                                                                                                                                                  |
 
 The available filter types are:
 
-| Filter Type ID | Name                  | Description                                        |
-| :------------- | :-------------------- | :------------------------------------------------- |
-| `0x01`         | Passthrough           | Passes data through, optionally with a count limit |
-| `0x02`         | Counter / Accumulator | Counts events or accumulates values                |
-| `0x03`         | Averaging             | Low memory recursive average / low pass filter     |
-| `0x04`         | Comparator            | Compares input against a reference value           |
-| `0x05`         | RMS                   | Root mean square of multi-component data           |
-| `0x06`         | Time Delay            | Delays or downsamples data by time                 |
-| `0x07`         | Math                  | Performs arithmetic operations on data             |
-| `0x08`         | Sample Delay          | Delays data by a fixed number of samples           |
-| `0x09`         | Data Packer           | Packs multiple data samples into one notification  |
-| `0x0A`         | Account               | Adds timestamps to data                            |
-| `0x0B`         | Threshold             | Detects when data crosses a threshold              |
-| `0x0C`         | Delta                 | Detects when data changes by a specified amount    |
-| `0x0D`         | Fuser                 | Combines data from multiple sources                |
-| `0x0E`         | Buffer                | Stores the latest data sample for later retrieval  |
+| Filter Type ID | Name                  | Description                                                         |
+| :------------- | :-------------------- | :----------------------------------------------------------------- |
+| `0x01`         | Passthrough           | Passes data through, optionally with a count limit                 |
+| `0x02`         | Accumulator / Counter | Accumulates (sums) values or counts events                         |
+| `0x03`         | Averager (Low-Pass)   | Low-memory recursive average / low-pass filter                     |
+| `0x06`         | Comparator            | Compares input against a reference value                           |
+| `0x07`         | RMS / RSS             | Root-mean-square / root-sum-square of multi-component (XYZ) data   |
+| `0x08`         | Time                  | Periodically samples / downsamples data by time, or emits sample differences |
+| `0x09`         | Math                  | Performs an arithmetic operation on data                           |
+| `0x0A`         | Sample Delay          | Buffers and delays data by a fixed number of samples               |
+| `0x0B`         | Pulse                 | Detects a pulse (a run of samples past a threshold)                |
+| `0x0C`         | Delta                 | Detects when data changes by a specified amount                    |
+| `0x0D`         | Threshold             | Detects when data crosses a threshold                              |
+| `0x0F`         | Buffer                | Stores the latest data sample for later retrieval                  |
+| `0x10`         | Packer                | Packs multiple data samples into one notification                  |
+| `0x11`         | Accounter             | Prepends timestamps / counters to data                             |
+| `0x1B`         | Fuser                 | Combines (fuses) data from multiple sources                        |
+
+The Filter Type IDs are **not contiguous** — there are no `0x04`, `0x05`, or `0x0E` types, and Fuser is `0x1B`.
+
+#### Filter Configuration Reference
+
+The bytes following the **Filter Type ID** (Byte 5 onward of the **Filter Add / Create** command) are specific to each filter. Multi-byte values are little-endian and expressed in the board's native data units (LSBs). Size and length fields are encoded as **(number of bytes − 1)**: a field value of `0` means 1 byte, `3` means 4 bytes.
+
+| Filter (Type ID)                                    | Configuration bytes (follow the Filter Type ID)                                                                                                                                                                                                                                                              |
+| :-------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Passthrough (`0x01`)                                | Byte 0: Mode (`0` = All, `1` = Conditional — pass while count > 0, `2` = Count — pass a fixed number) Byte 1-2: Count / value (uint16)                                                                                                                                                                       |
+| Accumulator / Counter (`0x02`)                      | Byte 0: Bits 0-1 = output size − 1, Bits 2-3 = input size − 1, Bits 4-6 = Mode (`0` = Accumulate/sum, `1` = Count). Counter mode ignores the input value and tracks event count.                                                                                                                            |
+| Averager / Low-Pass (`0x03`)                        | Byte 0: Bits 0-1 = output size − 1, Bits 2-3 = input size − 1, Bit 5 = Mode (`0` = low-pass, `1` = high-pass; high-pass requires module revision ≥ 2) Byte 1: Sample depth Byte 2: Channel count                                                                                                            |
+| Comparator (`0x06`) — single reference              | Byte 0: Signed (`0` = unsigned, `1` = signed) Byte 1: Operation (`0` = =, `1` = ≠, `2` = <, `3` = ≤, `4` = >, `5` = ≥) Byte 2: reserved (`0`) Byte 3-6: Reference value (int32)                                                                                                                             |
+| Comparator (`0x06`) — multi reference (FW ≥ 1.2.3)  | Byte 0: Bit 0 = signed, Bits 1-2 = length − 1, Bits 3-5 = operation (see above), Bits 6-7 = reference mode Byte 1+: One or more reference values (int32 each)                                                                                                                                                |
+| RMS / RSS (`0x07`)                                  | Byte 0: Bits 0-1 = output size − 1, Bits 2-3 = input size − 1, Bits 4-6 = channel count − 1, Bit 7 = signed Byte 1: Mode (`0` = RMS, `1` = RSS)                                                                                                                                                             |
+| Time (`0x08`)                                       | Byte 0: Bits 0-2 = data length − 1, Bits 3-5 = Mode (`0` = Absolute, `1` = Differential) Byte 1-4: Period in ms (uint32)                                                                                                                                                                                    |
+| Math (`0x09`)                                       | Byte 0: Bits 0-1 = output size − 1, Bits 2-3 = input size − 1, Bit 4 = signed Byte 1: Operation (`1` = add, `2` = multiply, `3` = divide, `4` = modulus, `5` = exponent, `6` = sqrt, `7` = left shift, `8` = right shift, `9` = subtract, `10` = absolute value, `11` = constant) Byte 2-5: Right-hand operand (int32) Byte 6: Channel count (FW ≥ 1.1.0) |
+| Sample Delay (`0x0A`)                               | Byte 0: Data length − 1 Byte 1: Bin size (number of samples held)                                                                                                                                                                                                                                           |
+| Pulse (`0x0B`)                                      | Byte 0: Data length − 1 Byte 1: Trigger mode (`0`) Byte 2: Output mode (`0` = width / sample count, `1` = area / sum, `2` = peak, `3` = on-detection) Byte 3-6: Threshold (int32) Byte 7-8: Width — minimum samples above threshold (uint16)                                                                  |
+| Delta (`0x0C`)                                      | Byte 0: Bits 0-1 = data length − 1, Bit 2 = signed, Bits 3-5 = Mode (`0` = Absolute, `1` = Differential, `2` = Binary) Byte 1-4: Magnitude (int32)                                                                                                                                                         |
+| Threshold (`0x0D`)                                  | Byte 0: Bits 0-1 = data length − 1, Bit 2 = signed, Bits 3-5 = Mode (`0` = Absolute, `1` = Binary) Byte 1-4: Boundary (int32) Byte 5-6: Hysteresis (uint16)                                                                                                                                                |
+| Buffer (`0x0F`)                                     | Byte 0: Bits 0-4 = data length − 1                                                                                                                                                                                                                                                                          |
+| Packer (`0x10`)                                     | Byte 0: Bits 0-4 = data length − 1 Byte 1: Bits 0-4 = sample count − 1                                                                                                                                                                                                                                      |
+| Accounter (`0x11`)                                  | Byte 0: Bits 0-3 = Mode (`0` = Count, `1` = Time), Bits 4-5 = data size − 1 Byte 1: Bits 0-3 = Prescale                                                                                                                                                                                                     |
+| Fuser (`0x1B`)                                      | Byte 0: Bits 0-3 = number of fused inputs Byte 1+: Buffer processor (filter) IDs, one byte each (up to 12), in order                                                                                                                                                                                        |
+
+
+### Wire-Level Reference: Data Processor
+
+#### Register Opcodes
+```
+ADD            = 0x02
+NOTIFY         = 0x03
+STATE          = 0x04
+PARAMETER      = 0x05
+REMOVE         = 0x06
+NOTIFY_ENABLE  = 0x07
+REMOVE_ALL     = 0x08
+```
+
+#### Overview
+
+The data processor chains on-device signal transformations. Processors are created one at a time;
+each ADD response assigns an ID that can be used as the source for subsequent processors.
+
+#### ADD command format
+
+```
+[0x09, 0x02, src_module, src_reg, src_data_id, src_config, proc_type, config_bytes...]
+```
+
+| Byte | Field | Notes |
+|------|-------|-------|
+| 0 | module | 0x09 |
+| 1 | register | 0x02 (ADD) |
+| 2 | src_module | Source module ID |
+| 3 | src_reg | Source register ID (not OR'd with 0x80) |
+| 4 | src_data_id | Source data ID, or 0xFF for "any" |
+| 5 | src_config | Encodes sample length and offset (see below) |
+| 6 | proc_type | Processor type ID |
+| 7+ | config_bytes | Per-processor config (see Processor Types) |
+
+**Response** (plain notification on (0x09, 0x02)):
+```
+[0x09, 0x02, assigned_proc_id]
+```
+Note: this is a plain notification, not a read-response (bit 7 is NOT set).
+
+#### Source config byte formula
+
+```
+src_config = ((n_channels * channel_size - 1) << 5) | offset
+```
+
+This encodes the total sample length minus 1 in the upper 3 bits, and the byte offset within
+the sample in the lower 5 bits.
+
+**Common source signals:**
+
+| Signal | Module | Reg | ID | Channels | Ch size | src_config |
+|--------|--------|-----|----|----------|---------|------------|
+| Switch | 0x01 | 0x01 | 0xFF | 1 | 1B | 0x00 |
+| GPIO ADC | 0x05 | 0x07 | pin | 1 | 2B | 0x20 |
+| GPIO absolute | 0x05 | 0x06 | pin | 1 | 2B | 0x20 |
+| Accelerometer | 0x03 | 0x04 | 0xFF | 3 | 2B | 0xA0 |
+| Gyroscope | 0x13 | 0x05 | 0xFF | 3 | 2B | 0xA0 |
+| Temperature | 0x04 | 0xC1 | ch | 1 | 2B | 0x20 |
+| Processor output | 0x09 | 0x03 | proc_id | varies | varies | computed |
+
+#### Processor streaming
+
+**Enable notifications:**
+```
+[0x09, 0x07, proc_id, 0x01]
+```
+
+**Disable notifications:**
+```
+[0x09, 0x07, proc_id, 0x00]
+```
+
+**Data notification format:**
+```
+[0x09, 0x03, proc_id, data_bytes...]
+```
+Multiple processors all share the same (0x09, 0x03) notification; demultiplex by proc_id at byte[2].
+
+#### Remove processors
+
+**Remove one:**
+```
+[0x09, 0x06, proc_id]
+```
+
+**Remove all:**
+```
+[0x09, 0x08]
+```
+
+---
+
+#### Processor Types
+
+##### 0x01 — Passthrough
+
+Gates data flow.
+
+Config bytes (3): `[mode, count_lo, count_hi]`
+
+| Mode | Value |
+|------|-------|
+| ALL | 0 |
+| CONDITIONAL | 1 |
+| COUNT | 2 |
+
+##### 0x02 — Accumulator / Counter
+
+Config byte (1): `{output_size-1 : 2, input_size-1 : 2, mode : 3}`
+
+| mode | Meaning |
+|------|---------|
+| 0 | Accumulate (SUM) |
+| 1 | Count events |
+
+For Counter, input_size field is 0 (ignored). Output is always 1 channel.
+
+**Reference test (test_led_controller step 1, Counter outputSize=1):**
+```
+[0x09, 0x02, 0x01, 0x01, 0xFF, 0x00, 0x02, 0x10]
+```
+Config byte 0x10 = `(0 & 0x3) | (1 << 4)` — outputSize=1, mode=COUNT.
+
+##### 0x03 — Average (Low-pass filter)
+
+Config bytes (2): `[byte0, sample_size]`
+
+`byte0 = (output_unit-1 & 0x3) | ((input_unit-1 & 0x3) << 2)`  (output == input size, mode=0=LPF)
+
+**Reference test (test_freefall step 2, Average of 2-byte RSS output, sampleSize=4):**
+```
+[0x09, 0x02, 0x09, 0x03, 0x00, 0x20, 0x03, 0x05, 0x04]
+```
+Config bytes `[0x05, 0x04]` — unit=2, s=1 → 1|(1<<2)=0x05; sample_size=4.
+
+##### 0x06 — Comparator
+
+Config bytes (7): `[is_signed, operation, padding, ref_b0, ref_b1, ref_b2, ref_b3]`
+
+Reference is a signed Int32 in little-endian byte order.
+
+| Operation | Value |
+|-----------|-------|
+| EQ | 0 |
+| NEQ | 1 |
+| LT | 2 |
+| LTE | 3 |
+| GT | 4 |
+| GTE | 5 |
+
+**Reference test (test_freefall step 4, EQ -1 signed):**
+```
+config: [0x01, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF]
+```
+
+##### 0x07 — RMS / RSS Combiner
+
+Reduces a multi-axis signal to a scalar magnitude.
+
+Config bytes (2): `[byte0, mode]`
+
+`byte0 = (unit-1 & 0x3) | ((unit-1 & 0x3) << 2) | ((channels-1 & 0x7) << 4) | (is_signed << 7)`
+
+| Mode | Value |
+|------|-------|
+| RMS | 0 |
+| RSS | 1 |
+
+Output: 1 channel, same byte width as one input channel, unsigned.
+
+**Reference test (test_freefall step 1, RSS of accelerometer 3ch×2B signed):**
+```
+[0x09, 0x02, 0x03, 0x04, 0xFF, 0xA0, 0x07, 0xA5, 0x01]
+```
+Config bytes `[0xA5, 0x01]` — unit=2, s=1, ch=3, signed: `1|(1<<2)|(2<<4)|0x80 = 0xA5`, mode=RSS=1.
+
+##### 0x08 — Time Delay
+
+Passes one sample per period.
+
+Config bytes (5): `[byte0, period_b0, period_b1, period_b2, period_b3]`
+
+`byte0 = ((data_length-1) & 0x7) | ((mode & 0x7) << 3)`
+
+Period is in milliseconds, little-endian UInt32.
+
+| Mode | Value |
+|------|-------|
+| ABSOLUTE | 0 |
+| DIFFERENTIAL | 1 |
+
+##### 0x09 — Math
+
+Arithmetic transform applied per sample.
+
+Config bytes (7): `[byte0, operation, rhs_b0, rhs_b1, rhs_b2, rhs_b3, n_channels]`
+
+`byte0 = (output_unit-1 & 0x3) | ((input_unit-1 & 0x3) << 2) | (is_signed << 4)`
+
+`n_channels = inputChannels - 1` when multichannel, else 0.
+
+The operation byte is the firmware enum value, written directly to the wire (verified against `MblMwMathOperation` and `MathConfig` in MetaWear-SDK-Cpp — there are no Negate/Floor/Ceil/Round operations in firmware):
+
+| Operation | Value |
+|-----------|-------|
+| ADD | 1 |
+| MULTIPLY | 2 |
+| DIVIDE | 3 |
+| MODULO | 4 |
+| EXPONENT | 5 |
+| SQRT | 6 |
+| LSHIFT | 7 |
+| RSHIFT | 8 |
+| SUBTRACT | 9 |
+| ABS | 10 |
+| CONSTANT | 11 |
+
+**Reference test (test_led_controller step 2, counter % 2, unsigned, output=4):**
+```
+config: [0x03, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00]
+```
+byte0 = `(4-1 & 0x3) | ((1-1 & 0x3) << 2) | (0 << 4) = 0x03`; op=MODULO=4; rhs=2 LE32; nch=0.
+
+##### 0x0A — Sample Delay
+
+Buffers N samples before emitting.
+
+Config bytes (2): `[data_length - 1, bin_size]`
+
+##### 0x0D — Threshold
+
+Emits a value when the input crosses a boundary.
+
+Config bytes (7): `[byte0, boundary_b0, boundary_b1, boundary_b2, boundary_b3, hyst_b0, hyst_b1]`
+
+`byte0 = (unit_size-1 & 0x3) | (is_signed << 2) | ((mode & 0x7) << 3)`
+
+Boundary is a signed Int32 in little-endian. Hysteresis is an unsigned UInt16 in little-endian.
+
+| Mode | Value | Output |
+|------|-------|--------|
+| ABSOLUTE | 0 | raw value (only when crossing) |
+| BINARY | 1 | Int32: +1 when above, –1 when below |
+
+**Reference test (test_freefall step 3, BINARY boundary=8192 unsigned):**
+```
+config: [0x09, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00]
+```
+byte0 = `(2-1 & 0x3) | (0 << 2) | (1 << 3) = 0x09`; boundary=8192=0x2000 LE32; hyst=0.
 
 ## 0x0A \- Event Module
 
@@ -473,13 +1246,54 @@ The **Event Module** allows users to program automatic responses to data events 
 
 Events are created by recording a command sequence: the host begins recording, sends the commands that should be executed when the event fires, and then ends recording. The MetaWear stores these commands and replays them each time the event triggers.
 
+Each recorded command becomes an **Event Entry** (`0x02`) that binds a trigger **source** (module, register, index) to a **target** command (module, register, parameter length), followed by the target command's parameter bytes written to **Event Command Parameters** (`0x03`). The firmware returns the assigned **Event Unique ID** as a notification. If the trigger passes data into the command (a data token), the Event Entry is extended by two additional bytes that encode the data length, data offset, and destination offset.
+
 | Setting        | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                           |
 | :------------- | :------ | :--- | :--- | :--- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Module Info    | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                                                           |
-| Entry          | `0x02`  | RW   | 18   | 18   | **Write**: Byte 0: Source Module ID Byte 1: Source Register ID Byte 2: Source Data Offset Byte 3-17: Event entry configuration **Read (Response)**: Byte 0: Event ID (uint8\_t) |
-| Cmd Parameters | `0x03`  | W    | 18   |      | Byte 0: Event ID (uint8\_t) Byte 1-17: Command bytes to execute when event fires                                                                                                |
-| Remove         | `0x04`  | W    | 1    |      | Byte 0: Event ID (uint8\_t) \- Removes the specified event                                                                                                                      |
-| Remove All     | `0x05`  | W    |      |      | No value required \- Removes all events                                                                                                                                         |
+| Module Info              | `0x00`  | R    |      | 3    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t) Byte 2: Count of Event Triggers Supported (uint8\_t)                                                                                                                                                                                |
+| Enable                   | `0x01`  | RW   | 1    | 1    | Byte 0: 0 \= disable, 1 \= enable. Presently the module is always enabled regardless of this value.                                                                                                                                                                                                                      |
+| Event Entry              | `0x02`  | RW   | 6    | 6    | **Write**: Byte 0: Source Module ID Byte 1: Source Register ID Byte 2: Source Index (`0xFF` if unused) Byte 3: Target Module ID Byte 4: Target Register ID Byte 5: Target Command Parameters Length **Read**: Byte 0: Event Unique ID. A successful write returns a notification carrying the firmware-assigned Event Unique ID. |
+| Event Command Parameters | `0x03`  | RW   | 18   | 18   | **Write**: Byte 0-17: Command parameter bytes to send when the event fires (the target command's data) **Read**: Byte 0: Event Unique ID                                                                                                                                                                                  |
+| Remove Event             | `0x04`  | W    | 1    |      | Byte 0: Event Unique ID \- Removes the specified event                                                                                                                                                                                                                                                                   |
+| Remove All Events        | `0x05`  | W    |      |      | No value required \- Removes all events                                                                                                                                                                                                                                                                                  |
+
+
+### Wire-Level Reference: Event
+
+#### Register Opcodes
+```
+ENTRY          = 0x02
+CMD_PARAMETERS = 0x03
+REMOVE         = 0x04
+REMOVE_ALL     = 0x05
+```
+
+#### Event Entry Command Format
+Events bind a source signal to a command that fires when the signal fires.
+
+```
+[0x0A, 0x02, src_module_id, src_register_id, src_data_id, dst_module_id, dst_register_id, param_length]
+```
+Optionally followed by a data token:
+```
+[data_length_and_offset_byte, dest_offset_byte]
+  where byte0 = 0x01 | (data_length << 1) | (data_offset << 4)
+```
+
+Then parameters:
+```
+[0x0A, 0x03, ...param_bytes...]
+```
+
+**Remove specific event commands:**
+```
+[0x0A, 0x04, command_id]
+```
+
+**Remove all events:**
+```
+[0x0A, 0x05]
+```
 
 ## 0x0B \- Logging Module
 
@@ -491,24 +1305,135 @@ Logging works by adding triggers that specify which data sources to log. Once lo
 
 The MetaWear has limited flash storage. When the log is full, behavior depends on the **Circular Buffer Mode**: if enabled, the oldest entries are overwritten; if disabled, logging stops.
 
+Downloading is page-based. After a **Readout** (`0x06`) request, the device streams **Readout Notify** (`0x07`) entries and, at the end of each page, sends an empty **Readout Page Complete** (`0x0D`) notification. The host replies with **Readout Page Confirm** (`0x0E`) to acknowledge the page — which permanently clears those entries from flash — and the device proceeds to the next page. Each logged sample is timestamped with the internal tick counter (`0x04`), where one tick is 48/32768 s (≈ 1.465 ms); the **Reset UID** distinguishes tick counts recorded across device resets.
+
 | Setting              | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                   |
 | :------------------- | :------ | :--- | :--- | :--- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Module Info          | `0x00`  | R    |      | 5    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t) Byte 2: Max Log Triggers (uint8\_t) Byte 3-4: Max Log Time (uint16\_t)            |
-| Enable               | `0x01`  | RW   | 1    | 1    | Byte 0: Enable (0 \= disable, 1 \= enable logging)                                                                                                                      |
-| Add Trigger          | `0x02`  | RW   | 4    | 4    | **Write**: Byte 0: Source Module ID Byte 1: Source Register ID Byte 2: Source Data Offset Byte 3: Source Data Length **Read (Response)**: Byte 0: Trigger ID (uint8\_t) |
-| Remove Trigger       | `0x03`  | W    | 1    |      | Byte 0: Trigger ID (uint8\_t)                                                                                                                                           |
-| Time                 | `0x04`  | R    |      | 4    | Byte 0-3: Current logging timestamp (uint32\_t)                                                                                                                         |
-| Length               | `0x05`  | R    |      | 2    | Byte 0-1: Number of log entries (uint16\_t)                                                                                                                             |
-| Readout              | `0x06`  | RW   | 4    | 4    | **Write**: Byte 0-3: Number of entries to read out (uint32\_t) **Read**: Byte 0-3: Readout status                                                                       |
-| Readout Notify       | `0x07`  | N    |      | 18   | Byte 0: Trigger ID (uint8\_t) Byte 1-4: Timestamp (uint32\_t) Byte 5-17: Logged data                                                                                    |
-| Readout Progress     | `0x08`  | N    |      | 2    | Byte 0-1: Entries remaining to be read (uint16\_t)                                                                                                                      |
-| Drop Entries         | `0x09`  | W    | 2    |      | Byte 0-1: Number of entries to drop (uint16\_t)                                                                                                                         |
-| Remove All Triggers  | `0x0A`  | W    |      |      | No value required \- Removes all log triggers                                                                                                                           |
-| Circular Buffer Mode | `0x0B`  | RW   | 1    | 1    | Byte 0: Enable (0 \= stop when full, 1 \= overwrite oldest)                                                                                                             |
-| Recycled Page Count  | `0x0C`  | R    |      | 2    | Byte 0-1: Number of recycled pages (uint16\_t)                                                                                                                          |
-| Page Completed       | `0x0D`  | N    |      |      | Notification sent when a readout page is completed                                                                                                                      |
-| Page Confirm         | `0x0E`  | W    |      |      | Confirms receipt of a readout page, triggers next page                                                                                                                  |
-| Page Flush           | `0x10`  | W    |      |      | Flushes the current page to flash                                                                                                                                       |
+| Module Info                | `0x00`  | R    |      | 9    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 3 (uint8\_t) Byte 2: Count of Log Triggers Supported (uint8\_t) Byte 3-6: Log Capacity in Entries (uint32\_t) Byte 7-8: Minimum Readout Request Size (uint16\_t)                                                                  |
+| Enable                     | `0x01`  | RW   | 1    | 1    | Byte 0: 0 \= disable, 1 \= enable logging                                                                                                                                                                                                                                                                |
+| Add Trigger                | `0x02`  | RW   | 4    | 4    | **Write**: Byte 0: Source Module ID Byte 1: Source Register ID Byte 2: Source Index (`0xFF` if unused) Byte 3: Bits 0-4 \= data offset within the source packet; Bits 5-7 \= entry length to match, in bytes, minus 1 (logging uses `0`-`3` = 1-4 bytes) **Read**: Byte 0: Trigger Unique ID **Response**: matches the write format. A successful write returns a notification carrying the assigned Trigger Unique ID. |
+| Remove Trigger             | `0x03`  | W    | 1    |      | Byte 0: Trigger Unique ID                                                                                                                                                                                                                                                                                |
+| Time                       | `0x04`  | R    |      | 5    | Byte 0-3: Present internal time / tick count (uint32, little-endian; 1 tick \= 48/32768 s ≈ 1.465 ms) Byte 4: Present Reset UID for the time base                                                                                                                                                        |
+| Length                     | `0x05`  | R    |      | 4    | Byte 0-3: Number of entries in the log, including timestamps (uint32, little-endian)                                                                                                                                                                                                                     |
+| Readout                    | `0x06`  | RW   | 8    | 8    | **Write**: Byte 0-3: Number of entries to read out (uint32) Byte 4-7: Readout notify delta — notify every N entries transferred (uint32) **Read**: matches the write                                                                                                                                     |
+| Readout Notify             | `0x07`  | N    |      | 18   | One or two 9-byte log entries. **Log Entry**: Byte 0: Bits 0-4 \= Trigger UID, Bits 5-7 \= Reset UID Byte 1-4: Timestamp (uint32) Byte 5-8: Data entry (uint32, fixed width, zero-padded for short data)                                                                                                  |
+| Readout Progress           | `0x08`  | N    |      | 4    | Byte 0-3: Number of entries remaining in the requested readout (uint32)                                                                                                                                                                                                                                  |
+| Drop Entries               | `0x09`  | W    | 4    |      | Byte 0-3: Number of log entries to drop (uint32)                                                                                                                                                                                                                                                         |
+| Remove All Triggers        | `0x0A`  | W    |      |      | No value required \- Removes all triggers                                                                                                                                                                                                                                                                |
+| Circular Buffer Mode       | `0x0B`  | RW   | 1    | 1    | Byte 0: 0 \= disabled (stop when full), 1 \= enabled (overwrite oldest)                                                                                                                                                                                                                                  |
+| Recycled Page Count        | `0x0C`  | R    |      | 2    | Byte 0-1: Cumulative count of pages that have been garbage-collected (uint16)                                                                                                                                                                                                                            |
+| Readout Page Complete      | `0x0D`  | N    | 0    | 0    | Empty payload. Sent at the end of each page during readout, after the readout completes, and after the Drop Entries command completes.                                                                                                                                                                   |
+| Readout Page Confirm       | `0x0E`  | W    | 0    | 0    | Empty payload. Confirms the Page Complete was received; confirming permanently nulls the received entries.                                                                                                                                                                                               |
+| Disable Garbage Collection | `0x0F`  | RW   | 1    | 1    | Byte 0: 1 \= disable GC, 0 \= enable GC                                                                                                                                                                                                                                                                  |
+| Flush Pending Writes       | `0x10`  | W    | 1    |      | Byte 0: 1 \= flush the write cache (MMS NAND flash)                                                                                                                                                                                                                                                      |
+
+
+### Wire-Level Reference: Logging
+
+#### Register Opcodes
+```
+ENABLE                  = 0x01
+TRIGGER                 = 0x02
+REMOVE                  = 0x03
+TIME                    = 0x04
+LENGTH                  = 0x05
+READOUT                 = 0x06
+READOUT_NOTIFY          = 0x07
+READOUT_PROGRESS        = 0x08
+REMOVE_ENTRIES          = 0x09
+REMOVE_ALL              = 0x0A
+CIRCULAR_BUFFER         = 0x0B
+READOUT_PAGE_COMPLETED  = 0x0D
+READOUT_PAGE_CONFIRM    = 0x0E
+PAGE_FLUSH              = 0x10
+```
+
+Revisions:
+```
+REVISION_EXTENDED_LOGGING = 2
+MMS_REVISION              = 3
+```
+
+#### Tick-to-ms Conversion
+```
+TICK_TIME_STEP = (48.0 / 32768.0) * 1000.0 = 1.46484375 ms/tick
+```
+
+#### Key Constants
+```
+ENTRY_ID_MASK = 0x1F   (lower 5 bits of byte)
+RESET_UID_MASK = 0x07  (next 3 bits: bits 5-7)
+BLE_ENTRY_SIZE = 9 bytes (1 id/reset + 4 tick + 4 data) — readout wire format
+LOG_ENTRY_DATA_SIZE = 4 bytes (uint32_t payload per entry)
+Note: entries occupy 8 bytes in flash storage, but the BLE readout format is 9 bytes.
+```
+
+#### Commands
+
+**Create a logger for a signal:**
+```
+[0x0B, 0x02, module_id, register_id, data_id, (offset<<5 | length-1)]
+```
+Response: `[0x0B, 0x02, assigned_entry_id]`
+
+**Start logging (with optional overwrite):**
+```
+[0x0B, 0x0B, overwrite]   <- set circular buffer
+[0x0B, 0x01, 0x01]        <- enable logging
+```
+
+**Stop logging:**
+```
+[0x0B, 0x01, 0x00]
+```
+
+**Read time signal (get reference epoch):**
+```
+[0x0B, 0x84]   <- READ_REGISTER(TIME) = 0x84
+```
+Response: `[0x0B, 0x84, tick_byte0, tick_byte1, tick_byte2, tick_byte3, reset_uid]`
+```kotlin
+val tick = ByteBuffer.wrap(response, 2, 4).order(LITTLE_ENDIAN).int.toLong() and 0xFFFFFFFFL
+val epoch = System.currentTimeMillis() - (tick * TICK_TIME_STEP).toLong()
+val resetUid = response[6]
+```
+
+**Download sequence:**
+1. Enable readout notify: `[0x0B, 0x07, 0x01]`
+2. For extended logging (revision 2): `[0x0B, 0x0D, 0x01]`
+3. Enable progress: `[0x0B, 0x08, 0x01]`
+4. Read length: `[0x0B, 0x85]` (READ_REGISTER(LENGTH))
+5. On length response, send readout: `[0x0B, 0x06, n_entries(4 bytes LE), n_notify(4 bytes LE)]`
+6. For each page-completed notification, confirm with: `[0x0B, 0x0E]`
+
+**Clear log entries:**
+```
+[0x0B, 0x09, 0xFF, 0xFF, 0xFF, 0xFF]
+```
+
+**Flush page (MMS only, revision 3):**
+```
+[0x0B, 0x10, 0x01]
+```
+
+#### Log Entry Format (from READOUT_NOTIFY = 0x07)
+Each notification packet is `[0x0B, 0x07, entry...]` and carries 1 or 2 log
+entries of **9 bytes each** (so payload = 9 or 18 bytes, packet = 11 or 20 bytes
+including the 2-byte header). Verified against `logging_response_readout_notify`
+in MetaWear-SDK-Cpp, which parses entries at offsets 2 and 11:
+```
+Entry at offset 2 (always present):
+  byte[offset+0]:    (reset_uid << 5) | entry_id     (reset_uid: bits 5-7, entry_id: bits 0-4)
+  byte[offset+1..4]: uint32 tick     (little-endian, 4 bytes)
+  byte[offset+5..8]: uint32 data     (little-endian, 4 bytes)
+
+Entry at offset 11 (present if packet length == 20):
+  same format as above
+```
+
+Wall-clock time of an entry: `logReferenceDate + tick * TICK_TIME_STEP`.
+
+To convert to a signal value, reassemble 4-byte chunks from consecutive entry IDs.
 
 ## 0x0C \- Timer Module
 
@@ -520,14 +1445,49 @@ Multiple timers can be created and run simultaneously. Each timer is assigned a 
 
 | Setting       | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                 |
 | :------------ | :------ | :--- | :--- | :--- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Module Info   | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                                                                                 |
-| Enable        | `0x01`  | RW   | 1    | 1    | Byte 0: Timer ID (uint8\_t) \- Enables the specified timer                                                                                                                                            |
-| Timer Entry   | `0x02`  | RW   | 7    | 7    | **Write**: Byte 0-3: Period in ms (uint32\_t) Byte 4-5: Repeat Count (uint16\_t, 0xFFFF \= indefinite) Byte 6: Delay Start (uint8\_t, 0 \= no delay) **Read (Response)**: Byte 0: Timer ID (uint8\_t) |
-| Start         | `0x03`  | W    | 1    |      | Byte 0: Timer ID (uint8\_t) \- Starts the timer                                                                                                                                                       |
-| Stop          | `0x04`  | W    | 1    |      | Byte 0: Timer ID (uint8\_t) \- Stops the timer                                                                                                                                                        |
-| Remove        | `0x05`  | W    | 1    |      | Byte 0: Timer ID (uint8\_t) \- Removes the timer                                                                                                                                                      |
-| Notify        | `0x06`  | N    |      | 1    | Byte 0: Timer ID (uint8\_t) \- Notification sent when timer fires                                                                                                                                     |
-| Notify Enable | `0x07`  | W    | 2    |      | Byte 0: Timer ID (uint8\_t) Byte 1: Enable (0 \= disable, 1 \= enable notifications)                                                                                                                  |
+| Module Info   | `0x00`  | R    |      | 3    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t) Byte 2: Count of Timers Supported (uint8\_t)                                                                                                                                                              |
+| Enable        | `0x01`  | RW   | 1    |      | Byte 0: 0 \= disable, 1 \= enable. Presently the module is always enabled regardless of this value.                                                                                                                                                                                            |
+| Timer Entry   | `0x02`  | RW   | 7    | 7    | **Write**: Byte 0-3: Period in ms (uint32) Byte 4-5: Trigger / repeat count (uint16, `0xFFFF` \= indefinite) Byte 6: First-tick flag (`1` \= fire immediately at start, `0` \= wait one full period before the first tick) **Read**: Byte 0: Timer Unique ID. A successful write returns a notification carrying the assigned Timer Unique ID. |
+| Start         | `0x03`  | W    | 1    |      | Byte 0: Timer Unique ID \- Starts the timer                                                                                                                                                                                                                                                    |
+| Stop          | `0x04`  | W    | 1    |      | Byte 0: Timer Unique ID \- Stops the timer                                                                                                                                                                                                                                                     |
+| Remove        | `0x05`  | W    | 1    |      | Byte 0: Timer Unique ID \- Removes the timer                                                                                                                                                                                                                                                   |
+| Notify        | `0x06`  | N    |      | 1    | Byte 0: Timer Unique ID \- Notification sent when the timer fires                                                                                                                                                                                                                              |
+| Notify Enable | `0x07`  | W    | 2    |      | Byte 0: Timer Unique ID Byte 1: Enable (0 \= disable, 1 \= enable notifications)                                                                                                                                                                                                               |
+
+
+### Wire-Level Reference: Timer
+
+#### Register Opcodes
+```
+ENABLE        = 0x01
+TIMER_ENTRY   = 0x02
+START         = 0x03
+STOP          = 0x04
+REMOVE        = 0x05
+NOTIFY        = 0x06
+NOTIFY_ENABLE = 0x07
+```
+
+#### Commands
+
+**Create timer:**
+```
+[0x0C, 0x02, period(4 bytes LE), repetitions(2 bytes LE), immediate_flag]
+```
+- `period` in milliseconds
+- `repetitions` = 0xFFFF for indefinite
+- `immediate_flag` = 1 for immediate first fire, 0 for delayed
+
+Response: `[0x0C, 0x02, timer_id]`
+
+**Start / Stop / Remove:**
+```
+Start:  [0x0C, 0x03, timer_id]
+Stop:   [0x0C, 0x04, timer_id]
+Remove: [0x0C, 0x05, timer_id]
+```
+
+**Timer fires notification:** `[0x0C, 0x06, timer_id]`
 
 ## 0x0D \- Serial Passthrough Module
 
@@ -537,11 +1497,114 @@ The **Serial Passthrough Module** provides direct access to the I2C and SPI buse
 
 For I2C, the host specifies the device address, register address, and the data to read or write. For SPI, the host specifies the chip select pin, clock rate, and data.
 
+> **Logic levels differ between boards.** On the MMS (nRF52840) the I2C bus (SDA/SCL) runs at **1.8 V logic**; on the MMRL (nRF52832) it runs at **3 V logic**. External I2C/SPI peripherals must match the board's logic level or be level-shifted — a sensor wired directly for one board will not necessarily work on the other.
+
 | Setting        | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                                                                                                                        |
 | :------------- | :------ | :--- | :--- | :--- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Module Info    | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                                                                                                                                                                                        |
-| I2C Read/Write | `0x01`  | RW   | 18   | 18   | **Write**: Byte 0: Device Address (uint8\_t, 7-bit I2C address) Byte 1: Register Address (uint8\_t) Byte 2: ID (uint8\_t, identifier for tracking) Byte 3: Data Length (uint8\_t) Byte 4+: Data to write **Read**: Byte 0: ID Byte 1: Device Address Byte 2: Register Address Byte 3+: Data read from device |
-| SPI Read/Write | `0x02`  | RW   | 18   | 18   | **Write**: Byte 0: SPI Mode / LSB First Byte 1: CS Pin Byte 2: CLK Pin Byte 3: MOSI Pin Byte 4: MISO Pin Byte 5: Data Length Byte 6: ID Byte 7+: Data to send **Read**: Byte 0: ID Byte 1+: Data received from device                                                                                        |
+| Module Info          | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 1 (uint8\_t)                                                                                                                                                                                                                                                                  |
+| I2C (TWI) Read/Write | `0x01`  | RW   | \*   | \*   | **Write**: Byte 0: I2C Device Address Byte 1: I2C Register Address Byte 2: User Index (`0xFF` if unused) Byte 3: Data Length (max 10) Byte 4-13: Data **Read command**: Byte 0: Device Address Byte 1: Register Address Byte 2: User Index (`0xFF` if unused) Byte 3: Data Length **Read response**: Byte 0: Index Byte 1-17: Data                       |
+| SPI Read/Write       | `0x02`  | RW   | \*   | \*   | **Write**: Byte 0: Slave Select Pin Byte 1: Clock Pin Byte 2: MOSI Pin Byte 3: MISO Pin Byte 4: Bit 0 \= LSB-first bit ordering, Bits 1-2 \= SPI Mode, Bits 3-5 \= SPI Frequency, Bit 6 \= Native Pin flag (use nRF pins instead of MetaWear GPIO pins) Byte 5-18: Data to write on the bus **Read**: Byte 0-4: same as write Byte 5: Bits 0-3 \= byte count to read minus 1 (`0` = 1 byte … `15` = 16 bytes), Bits 4-7 \= Read Index Byte 6-18: Data to write on the bus before reading **Read response**: Byte 0: Index Byte 1-16: Data |
+
+SPI is available only on **Module Revision ≥ 1**. The packed SPI configuration byte (Byte 4) uses these values:
+
+| SPI Mode (Bits 1-2) | Clock Polarity (CPOL) | Clock Phase (CPHA)                  |
+| :------------------ | :-------------------- | :---------------------------------- |
+| `0`                 | 0 (idle low)          | 0 (data sampled on the leading edge) |
+| `1`                 | 0 (idle low)          | 1 (data sampled on the trailing edge) |
+| `2`                 | 1 (idle high)         | 0 (data sampled on the leading edge) |
+| `3`                 | 1 (idle high)         | 1 (data sampled on the trailing edge) |
+
+| SPI Frequency (Bits 3-5) | Clock     |
+| :----------------------- | :-------- |
+| `0`                      | 125 kHz   |
+| `1`                      | 250 kHz   |
+| `2`                      | 500 kHz   |
+| `3`                      | 1 MHz     |
+| `4`                      | 2 MHz     |
+| `5`                      | 4 MHz     |
+| `6`                      | 8 MHz     |
+
+
+### Wire-Level Reference: Serial Passthrough (I2C / SPI)
+
+#### Register Opcodes
+```
+I2C_READ_WRITE = 0x01
+SPI_READ_WRITE = 0x02
+```
+
+#### I2C Write
+```
+[0x0D, 0x01, device_addr, reg_addr, id, data_len, data...]
+```
+
+| Field | Description |
+|---|---|
+| `device_addr` | 7-bit I2C address of the peripheral. |
+| `reg_addr` | Register (sub-address) to write to. |
+| `id` | Caller-assigned identifier (`0xFF` for plain writes); echoed in read responses. |
+| `data_len` | Number of payload bytes that follow. |
+| `data...` | Payload bytes. |
+
+The `id` byte comes **before** the length byte, for both writes and reads (verified against `mbl_mw_i2c_write` and `MblMwI2cSignal::read` in MetaWear-SDK-Cpp).
+
+#### I2C Read
+Send:
+```
+[0x0D, 0xC1, device_addr, reg_addr, id, read_len]
+```
+`0xC1 = 0x01 | 0x80 (read bit) | 0x40 (data_id bit)` — the data_id bit tells the board to include `id` as byte[2] in its response.
+
+Board responds with a plain notification (bit 7 NOT set):
+```
+[0x0D, 0x01, id, byte0, byte1, ...]
+```
+
+#### Reference test vector
+```
+Read 10 bytes from device 0x1C, register 0x0D, id=1:
+  Send:    [0x0D, 0xC1, 0x1C, 0x0D, 0x01, 0x0A]
+  Receive: [0x0D, 0x01, 0x01, data...]
+```
+
+#### SPI Write
+```
+[0x0D, 0x02, slave_select, clock, mode, data_len, msb_first, nrf_pins, id, data...]
+```
+
+#### SPI Read
+Send:
+```
+[0x0D, 0xC2, slave_select, clock, mode, read_len, msb_first, nrf_pins, id]
+```
+`0xC2 = 0x02 | 0x80 | 0x40` — same read+data_id bit pattern as I2C.
+
+Board responds:
+```
+[0x0D, 0x02, id, byte0, byte1, ...]
+```
+
+**SPI clock enum values:**
+```
+0 = 125 kHz
+1 = 250 kHz
+2 = 500 kHz
+3 = 1 MHz
+4 = 2 MHz
+5 = 4 MHz
+6 = 8 MHz
+```
+
+**SPI mode (CPOL/CPHA):**
+```
+0 = mode 0 (CPOL=0, CPHA=0)
+1 = mode 1 (CPOL=0, CPHA=1)
+2 = mode 2 (CPOL=1, CPHA=0)
+3 = mode 3 (CPOL=1, CPHA=1)
+```
+
+**`msb_first`:** `1` = MSB transmitted first (typical), `0` = LSB first.
+**`nrf_pins`:** `1` = use nRF internal SPI pins, `0` = use board expansion header pins.
 
 ## 0x0F \- Macro Module
 
@@ -553,16 +1616,66 @@ Macros are recorded by sending a **Begin** command, followed by the individual c
 
 | Setting                    | Address | Mode | Wlen | Rlen | Value                                                                                                                          |
 | :------------------------- | :------ | :--- | :--- | :--- | :----------------------------------------------------------------------------------------------------------------------------- |
-| Module Info                | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                          |
-| Enable                     | `0x01`  | RW   | 1    | 1    | Byte 0: Macro ID \- Enables execution of a macro on boot                                                                       |
-| Begin Macro                | `0x02`  | RW   | 1    | 3    | **Write**: Byte 0: Execute on boot (0 \= no, 1 \= yes) **Read (Response)**: Byte 0: Macro ID (uint8\_t)                        |
-| Add Command                | `0x03`  | W    | 18   |      | Byte 0-17: Command bytes to add to the current macro (same format as any command sent to the Command Characteristic)           |
-| End Macro                  | `0x04`  | W    |      |      | No value required \- Ends macro recording                                                                                      |
-| Execute                    | `0x05`  | W    | 1    |      | Byte 0: Macro ID (uint8\_t) \- Executes the specified macro                                                                    |
-| Finish Notification Enable | `0x06`  | W    | 2    |      | Byte 0: Macro ID (uint8\_t) Byte 1: Enable (0 \= disable, 1 \= enable)                                                         |
-| Macro Finished             | `0x07`  | N    |      | 1    | Byte 0: Macro ID (uint8\_t) \- Notification sent when macro execution completes                                                |
-| Erase All                  | `0x08`  | W    |      |      | No value required \- Erases all stored macros                                                                                  |
-| Add Partial Command        | `0x09`  | W    | 18   |      | Byte 0-17: Partial command data for commands that exceed 18 bytes. Send partial first, then full command with **Add Command**. |
+| Module Info                      | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                                                                                                          |
+| Enable                           | `0x01`  | RW   | 1    | 1    | Byte 0: 0 \= disable, 1 \= enable                                                                                                                                                                                              |
+| Add / Begin / Read Macro         | `0x02`  | RW   | 1    | 3    | **Write**: Byte 0: Execute on boot (0 \= no, 1 \= yes) **Read**: input Byte 0: Macro UID to read **Read response**: Byte 0: Macro UID Byte 1: Execute on boot Byte 2: Length. A successful write returns a notification carrying the assigned Macro UID. |
+| Add / Read Command               | `0x03`  | RW   | 18   |      | **Write**: Byte 0-17: Command bytes to store (same format as a command sent to the Command Characteristic; length is inferred from the packet length) **Read**: input Byte 0: Macro UID, Byte 1: Command Number **Read response**: Byte 0-17: the stored command |
+| End Macro                        | `0x04`  | W    | 0    |      | No value required \- confirms the end of macro setup                                                                                                                                                                          |
+| Execute Macro                    | `0x05`  | W    | 1    |      | Byte 0: Macro UID \- executes the specified macro                                                                                                                                                                              |
+| Macro Finish Notification Enable | `0x06`  | W    | 2    |      | Byte 0: Macro UID Byte 1: Enable (0 \= disable, 1 \= enable)                                                                                                                                                                   |
+| Macro Finished                   | `0x07`  | N    |      | 1    | Byte 0: Macro UID \- notification sent when macro execution completes                                                                                                                                                          |
+| Erase All                        | `0x08`  | W    | 0    |      | No value required \- erases all stored macros                                                                                                                                                                                  |
+| Add Partial Command              | `0x09`  | W    | 2    |      | Byte 0-1: Start of a partial command; these bytes are prepended to the next Add Command. Used when a command exceeds the maximum packet size.                                                                                  |
+
+
+### Wire-Level Reference: Macro
+
+#### Register Opcodes
+```
+BEGIN       = 0x02
+ADD_COMMAND = 0x03
+END         = 0x04
+EXECUTE     = 0x05
+ERASE_ALL   = 0x08
+ADD_PARTIAL = 0x09
+```
+
+#### Protocol
+
+Commands are written with response (unlike all others).
+
+**Begin macro recording:**
+```
+[0x0F, 0x02, exec_on_boot]   <- exec_on_boot: 1=run on boot, 0=manual only
+```
+Response: `[0x0F, 0x02, macro_id]`
+
+**Add command to macro:**
+For commands <= 13 bytes (MW_CMD_MAX_LENGTH - 2):
+```
+[0x0F, 0x03, ...command_bytes...]
+```
+
+For commands >= 14 bytes:
+```
+[0x0F, 0x09, cmd_byte0, cmd_byte1]       <- ADD_PARTIAL (first 2 bytes)
+[0x0F, 0x03, cmd_byte2..cmd_byteN-2]     <- ADD_COMMAND (remaining)
+```
+
+**End macro:**
+```
+[0x0F, 0x04]
+```
+
+**Execute macro:**
+```
+[0x0F, 0x05, macro_id]
+```
+
+**Erase all macros:**
+```
+[0x0F, 0x08]
+```
 
 ## 0x11 \- Settings Module
 
@@ -570,10 +1683,7 @@ The **Module Opcode** is `0x11`.
 
 The **Settings Module** is the most important module because it is used to determine which MetaWear device is connected. It is also used to control how the MetaWear advertises and how strong the Bluetooth connection is.
 
-The **Module Info** determines the module revision:
-
-* Revision `0x01` \= MMRL (MetaMotionRL)
-* Revision `0x05` \= MMS (MetaMotionS)
+The **Module Info** revision indicates which registers and features are available; the Settings module has grown the most across firmware versions, and current boards (MMRL and MMS) report **revision 10**. The **Optional Feature Bitmask** (Module Info Byte 2) reports whether the power-status, charger-status, and 3V-request features are supported on a given board.
 
 The MMS has the additional capability of being able to indicate when it is charging.
 
@@ -583,7 +1693,7 @@ Bluetooth devices typically advertise every 100ms to 1sec. The advertising only 
 
 Bluetooth power is expressed in Decibel-milliwatt (dBm), the unit used to measure radio frequency (RF) power level. For a Bluetooth device, 0dBm is the standard power level and \+4dBm is just over a doubling of power. \-3dBm will be half power, \-6dBm will be a 1/4 power and \-9dBm 1/8 power. Each change in ±3dBM is a doubling/halving of power. The MetaWear **TX Power** is configurable.
 
-**Bonding** is not currently supported.
+Bonding-related registers (**Bonds Delete** `0x04` and **Initiate Bonding** `0x06`) are present in firmware but are not exercised by the standard SDKs.
 
 Custom advertising packets are possible on MetaSensors using the **Partial Scan Response Packet** and **Scan Response Packet** which you can turn on and off using **Start Advertisement**.
 
@@ -599,43 +1709,232 @@ The MMS is also able to provide users with the ability to read the charge of the
 
 | Setting               | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                         |
 | :-------------------- | :------ | :--- | :--- | :--- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Module Info           | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: see above (uint8\_t)                                                                                                                  |
-| Device Name           | `0x01`  | RW   | 8    | 8    | Byte 0-7: Device name as ASCII characters (up to 8 bytes, null terminated)                                                                                                                                    |
-| Advertising Interval  | `0x02`  | RW   | 3    | 3    | Byte 0-1: Interval in units of 0.625ms (uint16\_t) Byte 2: Timeout in seconds (uint8\_t, 0 \= no timeout)                                                                                                     |
-| TX Power              | `0x03`  | RW   | 1    | 1    | Byte 0: TX Power Level in dBm (int8\_t). Valid values: \-40, \-20, \-16, \-12, \-8, \-4, 0, 4                                                                                                                 |
-| Start Advertisement   | `0x05`  | W    |      |      | No value required \- Starts advertising with current settings                                                                                                                                                 |
-| Scan Response Packet  | `0x07`  | RW   | 18   | 18   | Byte 0-17: Custom scan response data (up to 18 bytes)                                                                                                                                                         |
-| Partial Scan Response | `0x08`  | W    | 13   |      | Byte 0-12: Partial scan response data (for packets exceeding 18 bytes)                                                                                                                                        |
-| Connection Parameters | `0x09`  | RW   | 8    | 8    | Byte 0-1: Min Connection Interval in units of 1.25ms (uint16\_t) Byte 2-3: Max Connection Interval (uint16\_t) Byte 4-5: Slave Latency (uint16\_t) Byte 6-7: Supervision Timeout in units of 10ms (uint16\_t) |
-| Disconnect Event      | `0x0A`  | N    |      | 1    | Byte 0: Disconnect reason code (uint8\_t) \- Notification sent on BLE disconnect                                                                                                                              |
-| MAC Address           | `0x0B`  | R    |      | 6    | Byte 0-5: Bluetooth MAC Address (6 bytes, little-endian)                                                                                                                                                      |
-| Battery State         | `0x0C`  | RN   |      | 3    | Byte 0: Battery charge percentage (uint8\_t, 0-100) Byte 1-2: Battery voltage in mV (uint16\_t)                                                                                                               |
-| Power Status          | `0x11`  | RN   |      | 1    | Byte 0: Power Status (uint8\_t, 1 \= USB plugged in, 0 \= not plugged in)                                                                                                                                     |
-| Charge Status         | `0x12`  | RN   |      | 1    | Byte 0: Charge Status (uint8\_t, 1 \= charging complete, 0 \= charging)                                                                                                                                       |
-| Whitelist Filter Mode | `0x13`  | RW   | 1    | 1    | Byte 0: Filter mode (uint8\_t)                                                                                                                                                                                |
-| Whitelist Addresses   | `0x14`  | RW   | 7    | 7    | Byte 0: Address entry index (uint8\_t) Byte 1: Address type (uint8\_t) Byte 2-7: BLE Address (6 bytes)                                                                                                        |
-| 3V Power              | `0x1C`  | RW   | 1    | 1    | Byte 0: Enable 3.3V regulator (uint8\_t, 0 \= off, 1 \= on)                                                                                                                                                   |
-| Force 1M PHY          | `0x1D`  | RW   | 1    | 1    | Byte 0: Force 1M PHY (uint8\_t, 0 \= allow 2M PHY, 1 \= force 1M PHY)                                                                                                                                         |
+| Module Info                  | `0x00`  | R    |      | 4    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 10 (uint8\_t) Byte 2: Optional Feature Bitmask (Bit 0: Power Status supported, Bit 1: Charger Status supported, Bit 2: Request 3V supported) Byte 3: Firmware Build ID (uint8\_t, default 0) |
+| Device Name                  | `0x01`  | RW   | 1-26 | 1-26 | ASCII string, up to 26 bytes (the BLE advertising complete-local-name limit), no termination required. Longer names are truncated by the board.                                                                                                                  |
+| Advertising Parameters       | `0x02`  | RW   | 4    | 4    | Byte 0-1: Advertising interval in units of 0.625 ms (uint16) Byte 2: Advertising timeout in seconds (max 180, `0` \= unlimited) Byte 3: Advertisement type (`0` \= connectable undirected, `1` \= connectable directed)                                          |
+| TX Power                     | `0x03`  | RW   | 1    | 1    | Byte 0: TX power in dBm (int8). Valid values: 4, 0, \-4, \-8, \-12, \-16, \-20, \-30                                                                                                                                                                             |
+| Bonds Delete                 | `0x04`  | RW   | 1    | 1    | Byte 0: Reset bonds on disconnect (`0` \= maintain bonds, `1` \= delete bonds)                                                                                                                                                                                   |
+| Start Advertisement          | `0x05`  | W    | 0    |      | No value required \- starts advertising with current settings                                                                                                                                                                                                   |
+| Initiate Bonding             | `0x06`  | W    | 0    |      | No value required \- initiates authentication from the device side                                                                                                                                                                                              |
+| Scan Response Packet         | `0x07`  | RW   | 18   | 18   | Byte 0-17: Scan response packet (length inferred from the packet length)                                                                                                                                                                                        |
+| Partial Scan Response Packet | `0x08`  | W    | 13   |      | Byte 0-12: Start of a scan response packet; prepended to the next Scan Response Packet command                                                                                                                                                                   |
+| Connection Parameters        | `0x09`  | RW   | 8    | 8    | Byte 0-1: Minimum connection interval (uint16, units of 1.25 ms, range 6-3200) Byte 2-3: Maximum connection interval (uint16, units of 1.25 ms, range 6-3200) Byte 4-5: Slave latency (intervals the device may skip, range 0-1000) Byte 6-7: Supervision timeout (uint16, units of 10 ms, range 10-3200) |
+| Disconnect Event             | `0x0A`  | N    | 0    | 0    | Empty payload \- notification sent on disconnect                                                                                                                                                                                                                |
+| Device GAP (MAC) Address     | `0x0B`  | R    |      | 6    | Byte 0-5: Address, little-endian (LSB first). No address-type byte (verified against MetaWear-SDK-Cpp, which parses a 6-byte MAC signal).                                                                                                                        |
+| Battery State                | `0x0C`  | RN   |      | 3    | Byte 0: Battery charge in % (uint8) Byte 1-2: Battery voltage in mV (uint16)                                                                                                                                                                                     |
+| Watchdog Enable              | `0x0D`  | R    |      | 3    | Byte 0: `0` \= disable, `1` \= enable. State persists through resets other than power cycling and the watchdog reset itself.                                                                                                                                     |
+| Watchdog Config              | `0x0E`  | RW   | 5    | 5    | Immutable while the watchdog is enabled; persists through soft reset. Byte 0-3: Countdown timer count (uint32, units of (Value+1)/32768 s) Byte 4: Bit 0 \= Run While Sleeping (`1` \= run while asleep, `0` \= pause)                                            |
+| Watchdog Auto Refresh        | `0x0F`  | RW   | 1    | 1    | If the watchdog is enabled at boot, Bit 0 is set automatically until overridden. Bit 0: Refresh timer on schedule-entry execution. Bit 1: Refresh timer on entering sleep.                                                                                        |
+| Watchdog User Refresh        | `0x10`  | W    | 0    |      | No parameter \- refreshes the watchdog timer                                                                                                                                                                                                                     |
+| Power Status                 | `0x11`  | RN   | 1    | 1    | Byte 0: `0` \= power source absent, `1` \= power source present. On boot, if a power source is present, a notification fires after all startup macros have executed.                                                                                             |
+| Charger Status               | `0x12`  | RN   | 1    | 1    | Byte 0: `0` \= battery not charging, `1` \= battery charging. On boot, if the battery is charging, a notification fires after all startup macros have executed.                                                                                                  |
+| Whitelist Filter Mode        | `0x13`  | RW   | 1    | 1    | Byte 0: Mode (`0` \= allow from any, `1` \= filter scan requests, `2` \= filter connection requests, `3` \= filter scan and connection requests)                                                                                                                |
+| Whitelist MAC Addresses      | `0x14`  | RW   | 8    | 8    | Byte 0: Index Byte 1: Address type Byte 2-7: Address, little-endian. Index 0 is the MAC used for directed advertising; indexes 1-8 are the whitelist filter addresses (load in order).                                                                            |
+| Peer MAC Address             | `0x15`  | R    |      | 7    | Byte 0: Address type (`0` \= public, `1` \= random static, `2` \= private resolvable, `3` \= private non-resolvable) Byte 1-6: Address, little-endian (LSB first)                                                                                                |
+| Bond Count                   | `0x16`  |      |      |      | Reserved / not yet documented                                                                                                                                                                                                                                   |
+| Advertisement Stop           | `0x17`  |      |      |      | Reserved / not yet documented                                                                                                                                                                                                                                   |
+| Privacy                      | `0x18`  |      |      |      | Reserved / not yet documented                                                                                                                                                                                                                                   |
+| Whitelist Bonds              | `0x19`  |      |      |      | Reserved / not yet documented                                                                                                                                                                                                                                   |
+| Authenticate Response        | `0x1A`  |      |      |      | Reserved / not yet documented                                                                                                                                                                                                                                   |
+| Connection Status            | `0x1B`  |      |      |      | Reserved / not yet documented                                                                                                                                                                                                                                   |
+| 3V Enable                    | `0x1C`  | RW   | 1    | 1    | Byte 0: Enable 3V regulator (`0` \= disable, `1` \= enable)                                                                                                                                                                                                      |
+| Force 1M PHY                 | `0x1D`  | RW   | 1    | 1    | Byte 0: Force 1 MHz PHY (`0` \= use auto PHY, `1` \= force 1 MHz PHY)                                                                                                                                                                                            |
+
+
+### Wire-Level Reference: Settings
+
+#### Register Opcodes
+```
+DEVICE_NAME             = 0x01
+AD_INTERVAL             = 0x02
+TX_POWER                = 0x03
+START_ADVERTISING       = 0x05
+SCAN_RESPONSE           = 0x07
+PARTIAL_SCAN_RESPONSE   = 0x08
+CONNECTION_PARAMS       = 0x09
+DISCONNECT_EVENT        = 0x0A
+MAC                     = 0x0B
+BATTERY_STATE           = 0x0C
+POWER_STATUS            = 0x11
+CHARGE_STATUS           = 0x12
+WHITELIST_FILTER_MODE   = 0x13
+WHITELIST_ADDRESSES     = 0x14
+THREE_VOLT_POWER        = 0x1C
+FORCE_1M_PHY            = 0x1D
+```
+
+Revisions:
+```
+CONN_PARAMS_REVISION      = 1
+DISCONNECTED_EVENT_REVISION = 2
+BATTERY_REVISION          = 3
+CHARGE_STATUS_REVISION    = 5
+WHITELIST_REVISION        = 6
+MMS_REVISION              = 9
+MMS_PHY_REVISION          = 10
+```
+
+#### Commands
+
+**Set device name:**
+```
+[0x11, 0x01, ...ascii_bytes...]
+```
+Constraints (enforced by firmware for BLE advertising):
+- Maximum **26 ASCII bytes** (not UTF-8). Longer strings are silently truncated by the board.
+- Allowed characters: `A-Z`, `a-z`, `0-9`, `_`, `-`, and space. Writing other code points will be rejected or mangled by the advertising layer.
+
+**Set advertising interval:**
+```
+[0x11, 0x02, interval_low, interval_high, timeout]
+```
+If revision >= 1: interval is divided by 0.625 (AD_INTERVAL_STEP) before encoding.
+If revision >= 6 (WHITELIST): append `ad_type` byte.
+
+**Set TX power:**
+```
+[0x11, 0x03, tx_power_signed_byte]
+```
+
+**Start advertising:**
+```
+[0x11, 0x05]
+```
+
+**Set connection parameters:**
+```
+[0x11, 0x09, min_ci_lo, min_ci_hi, max_ci_lo, max_ci_hi, latency_lo, latency_hi, timeout_lo, timeout_hi]
+```
+All values divided by CONN_INTERVAL_STEP (1.25) or TIMEOUT_STEP (10) respectively.
+
+**Read battery:**
+```
+[0x11, 0x8C]   <- READ_REGISTER(BATTERY_STATE)
+```
+Response: `[0x11, 0x8C, charge_percent, voltage_lo, voltage_hi]`
+```kotlin
+val charge  = response[2]
+val voltage = ((response[3].toInt() and 0xFF) or ((response[4].toInt() and 0xFF) shl 8)).toFloat()
+```
+
+**Read MAC address:**
+```
+[0x11, 0x8B]   <- READ_REGISTER(MAC)
+```
+Response: `[0x11, 0x8B, b0, b1, b2, b3, b4, b5]`
+Format: `"%02X:%02X:%02X:%02X:%02X:%02X", b5, b4, b3, b2, b1, b0`
+
+**Read power/charge status:**
+```
+[0x11, 0x91]   <- READ_REGISTER(POWER_STATUS)
+[0x11, 0x92]   <- READ_REGISTER(CHARGE_STATUS)
+```
+Response byte[2] contains the status value.
+
+**3V regulator (MMS only, revision 9):**
+```
+[0x11, 0x1C, enable_byte]
+```
+
+**Force 1M PHY (MMS only, revision 10):**
+```
+[0x11, 0x1D, enable_byte]
+```
 
 ## 0x12 \- Barometer Module
 
 The **Module Opcode** is `0x12`.
 
-The **Barometer Module** provides access to the BOSCH BMP280 pressure sensor on the MetaWear. It can read barometric pressure and estimate altitude based on the pressure reading.
+The **Barometer Module** provides access to the Bosch pressure sensor on the MetaWear. It reads barometric pressure and computes altitude from the pressure reading. Two sensor variants are supported, identified by the **Module Implementation ID**:
 
-Pressure is returned as an unsigned 32-bit integer in units of Pa (Pascals) with a scaling factor of 256 (divide by 256 to get the actual pressure in Pa). Altitude is returned as a signed 32-bit integer in units of cm.
+* Implementation `0` \= BOSCH BMP280
+* Implementation `1` \= BOSCH BME280
 
-The barometer can be configured to run in single-shot or cyclic mode. In cyclic mode, the sensor continuously measures at the configured rate. The configuration register maps to the BMP280 registers for oversampling, filtering, and standby time.
+Both variants share the same register map and differ only in two of the available standby-time settings (see the **Mode** register below). On the BME280, relative humidity is exposed separately through the **Humidity Module** (`0x16`), not the barometer.
 
-Refer to the [BOSCH BMP280 Datasheet](https://www.bosch-sensortec.com/products/environmental-sensors/pressure-sensors/bmp280/) for detailed register configuration.
+Pressure is returned as a **u24.8** fixed-point value in Pascals — divide the raw uint32 by 256 to get Pa. Altitude is returned as an **s24.8** fixed-point value in **meters** — divide the raw int32 by 256 to get meters.
 
-| Setting     | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                                                                  |
-| :---------- | :------ | :--- | :--- | :--- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Module Info | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                                                                                                                                  |
-| Pressure    | `0x01`  | RN   |      | 4    | Byte 0-3: Pressure uint32\_t in units of Pa/256 (divide by 256.0 to get Pa)                                                                                                                                                                            |
-| Altitude    | `0x02`  | RN   |      | 4    | Byte 0-3: Altitude int32\_t in units of cm                                                                                                                                                                                                             |
-| Config      | `0x03`  | RW   | 7    | 7    | Byte 0: Oversampling for pressure (uint8\_t, see BMP280 datasheet) Byte 1: Oversampling for temperature (uint8\_t) Byte 2: IIR Filter Coefficient (uint8\_t) Byte 3-4: Standby Time in ms (uint16\_t) Byte 5: Output Data Rate / Mode Byte 6: Reserved |
-| Cyclic      | `0x04`  | RW   | 2    | 1    | **Write**: Byte 0: Enable Bit Mask (Bit 0: Pressure, Bit 1: Altitude) Byte 1: Disable Bit Mask **Read**: Byte 0: Enable Bit Mask                                                                                                                       |
+The **Mode** register maps directly to the BMP280/BME280 `ctrl_meas` and `config` registers (oversampling, IIR filter, and standby time). Refer to the [BOSCH BMP280 Datasheet](https://www.bosch-sensortec.com/products/environmental-sensors/pressure-sensors/bmp280/) for details.
+
+| Setting       | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                                                                                                          |
+| :------------ | :------ | :--- | :--- | :--- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Module Info   | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID (`0` \= BMP280, `1` \= BME280) (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                                                                                                                                               |
+| Pressure      | `0x01`  | RN   |      | 4    | Byte 0-3: Pressure in Pa, u24.8 fixed point (uint32, divide by 256 for Pa)                                                                                                                                                                                                                     |
+| Altitude      | `0x02`  | RN   |      | 4    | Byte 0-3: Altitude in meters, s24.8 fixed point (int32, divide by 256 for meters)                                                                                                                                                                                                              |
+| Mode          | `0x03`  | RW   | 2    | 2    | Maps to the `ctrl_meas` and `config` registers. Byte 0: Bits 2-4 \= Pressure oversampling (`0` = skip, `1` = 1x, `2` = 2x, `3` = 4x, `4` = 8x, `5` = 16x), Bits 5-7 \= Temperature oversampling (same scale) Byte 1: Bits 2-4 \= IIR filter (`0` = off, `1` = avg2, `2` = avg4, `3` = avg8, `4` = avg16), Bits 5-7 \= Normal-mode standby time (see table below) |
+| Cyclic Enable | `0x04`  | RW   | 2    | 2    | Byte 0: Enable (`0` \= stop, `1` \= start) Byte 1: Convert to altitude (`0` \= pressure output, `1` \= altitude output)                                                                                                                                                                         |
+
+The **standby time** field (Mode register, Byte 1 bits 5-7) is the only setting whose values differ between the two variants:
+
+| Value | BMP280   | BME280   |
+| :---- | :------- | :------- |
+| `0`   | 0.5 ms   | 0.5 ms   |
+| `1`   | 62.5 ms  | 62.5 ms  |
+| `2`   | 125 ms   | 125 ms   |
+| `3`   | 250 ms   | 250 ms   |
+| `4`   | 500 ms   | 500 ms   |
+| `5`   | 1000 ms  | 1000 ms  |
+| `6`   | 2000 ms  | 10 ms    |
+| `7`   | 4000 ms  | 20 ms    |
+
+
+### Wire-Level Reference: Barometer (BMP280 / BME280)
+
+#### Implementation Types
+```
+MBL_MW_MODULE_BARO_TYPE_BMP280 = 0
+MBL_MW_MODULE_BARO_TYPE_BME280 = 1
+```
+
+#### Register Opcodes
+```
+PRESSURE  = 0x01
+ALTITUDE  = 0x02
+CONFIG    = 0x03
+CYCLIC    = 0x04
+```
+
+#### Config Struct (`BoschBaroConfig`, 2 bytes)
+```
+byte 0:
+  bits 0-1: unused
+  bits 2-4: pressure_oversampling
+  bits 5-7: temperature_oversampling
+byte 1:
+  bits 0-1: unused
+  bits 2-4: iir_filter
+  bits 5-7: standby_time
+```
+
+#### Commands
+
+**Start / Stop cyclic measurement:**
+```
+Start: [0x12, 0x04, 0x01, 0x01]
+Stop:  [0x12, 0x04, 0x00, 0x00]
+```
+
+**Write config:**
+```
+[0x12, 0x03, config_byte_0, config_byte_1]
+```
+
+#### Response Parsing
+
+**Pressure** (4 bytes, unsigned, `response[2..5]`):
+```kotlin
+val rawPressure = (response[2].toLong() and 0xFF) or
+                  ((response[3].toLong() and 0xFF) shl 8) or
+                  ((response[4].toLong() and 0xFF) shl 16) or
+                  ((response[5].toLong() and 0xFF) shl 24)
+val pressurePa = rawPressure / 256.0f   // BOSCH_BARO_SCALE = 256.0
+```
+
+**Altitude** (4 bytes, signed):
+```kotlin
+val rawAlt = ByteBuffer.wrap(response, 2, 4).order(ByteOrder.LITTLE_ENDIAN).int
+val altitudeM = rawAlt / 256.0f
+```
 
 ## 0x13 \- Gyroscope Module
 
@@ -659,24 +1958,177 @@ For the BMI160:
 
 | Setting                    | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                                         |
 | :------------------------- | :------ | :--- | :--- | :--- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Module Info                | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: `0x00` (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                                                                                                    |
-| Gyro Power Mode            | `0x01`  | W    | 1    |      | Switch Gyroscope Power modes. **Write**: Byte 0: Value `0x00` \= Suspend Value `0x01` \= Normal                                                                                                                               |
+| Module Info                | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: `0x00` (uint8\_t) Byte 1: Module Revision: 1 (uint8\_t)                                                                                                                                     |
+| Gyro Power Mode            | `0x01`  | W    | 1    |      | Switch Gyroscope Power modes (writes the BMI160 CMD register). **Write**: Byte 0: `0` \= Suspend, `1` \= Normal, `2` \= Reserved, `3` \= Fast Start-Up                                                                        |
 | Gyro Data Interrupt Enable | `0x02`  | RW   | 2    | 1    | Turn the data ready interrupt ON/OFF. **Write**: Byte 0: Enable Bit Mask (Bit 0: enable gyro data ready int) Byte 1: Disable Bit Mask **Read**: Byte 0: Enable Bit Mask                                                       |
 | Gyro Data Config           | `0x03`  | RW   | 2    | 2    | Sets ODR and Range. **Read/Write**: Byte 0: *GYR\_CONF* (BMI160) Bit 0-3: uint8\_t odr Bit 4-5: uint8\_t bwp Byte 1: *GYR\_RANGE* Bit 0-2: uint8\_t range (0 \= 2000°/s, 1 \= 1000°/s, 2 \= 500°/s, 3 \= 250°/s, 4 \= 125°/s) |
+| Gyro Power Mode Trigger    | `0x04`  | RW   | 1    | 1    | BMI160 *PMU\_TRIGGER* register. Configures the interrupt source used to wake the gyroscope for data capture.                                                                                                                  |
 | Gyro Data Interrupt        | `0x05`  | RN   |      | 6    | Gyroscope data. **Read/Notify**: Byte 0-1: X: int16\_t Byte 2-3: Y: int16\_t Byte 4-5: Z: int16\_t                                                                                                                            |
+| Power Mode Status          | `0x06`  | R    |      | 1    | Present power state of the accel/gyro functions. BMI160 *PMU\_STATUS* register.                                                                                                                                               |
 | Packed Gyro Data           | `0x07`  | N    |      | 18   | Accumulated Vector Output of Register 0x05. **Notify**: int16\_t (X, Y, Z)\[3\]: Byte 0-1: X Byte 2-3: Y Byte 4-5: Z Byte 6-7: X Byte 8-9: Y Byte 10-11: Z Byte 12-13: X Byte 14-15: Y Byte 16-17: Z                          |
 
 For the BMI270:
 
 | Setting                    | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                                                                                |
 | :------------------------- | :------ | :--- | :--- | :--- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Module Info                | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: `0x01` (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                                                                                                                                           |
-| Gyro Power Mode            | `0x01`  | W    | 1    |      | Switch Gyroscope Power modes. **Write**: Byte 0: Value `0x00` \= Suspend Value `0x01` \= Normal                                                                                                                                                                      |
+| Module Info                | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: `0x01` (uint8\_t) Byte 1: Module Revision: 0 (uint8\_t)                                                                                                                                                                            |
+| Gyro Power Mode            | `0x01`  | W    | 1    |      | Switch Gyroscope Power modes (writes the BMI270 CMD register). **Write**: Byte 0: `0` \= Suspend, `1` \= Normal, `2` \= Low Power                                                                                                                                    |
 | Gyro Data Interrupt Enable | `0x02`  | RW   | 2    | 1    | Turn the data ready interrupt ON/OFF. **Write**: Byte 0: Enable Bit Mask (Bit 0: enable gyro data ready int) Byte 1: Disable Bit Mask **Read**: Byte 0: Enable Bit Mask                                                                                              |
 | Gyro Data Config           | `0x03`  | RW   | 2    | 2    | Sets ODR and Range. **Read/Write**: Byte 0: *GYR\_CONF* (BMI270) Bit 0-3: uint8\_t odr Bit 4-5: uint8\_t bwp Bit 6: noise\_perf Bit 7: filter\_perf Byte 1: *GYR\_RANGE* Bit 0-2: uint8\_t range (0 \= 2000°/s, 1 \= 1000°/s, 2 \= 500°/s, 3 \= 250°/s, 4 \= 125°/s) |
 | Gyro Data Interrupt        | `0x04`  | RN   |      | 6    | Gyroscope data. **Read/Notify**: Byte 0-1: X: int16\_t Byte 2-3: Y: int16\_t Byte 4-5: Z: int16\_t                                                                                                                                                                   |
 | Packed Gyro Data           | `0x05`  | N    |      | 18   | Accumulated Vector Output of Register 0x04. **Notify**: int16\_t (X, Y, Z)\[3\]: Byte 0-1: X Byte 2-3: Y Byte 4-5: Z Byte 6-7: X Byte 8-9: Y Byte 10-11: Z Byte 12-13: X Byte 14-15: Y Byte 16-17: Z                                                                 |
-| Offset                     | `0x06`  | RW   | 6    | 6    | Offset compensation for gyro. **Read/Write**: Byte 0-1: gyr\_off\_x (int16\_t) Byte 2-3: gyr\_off\_y (int16\_t) Byte 4-5: gyr\_off\_z (int16\_t)                                                                                                                     |
+| Gyro Offset                | `0x06`  | RW   | 4    | 4    | BMI270 gyro offset registers (*OFFSET3* – *OFFSET6*).                                                                                                                                                                                                               |
+
+
+### Wire-Level Reference: Gyroscope
+
+#### Implementation Types
+```
+MBL_MW_MODULE_GYRO_TYPE_BMI160 = 0
+MBL_MW_MODULE_GYRO_TYPE_BMI270 = 1
+```
+
+#### BMI160 Register Opcodes
+```
+POWER_MODE             = 0x01
+DATA_INTERRUPT_ENABLE  = 0x02
+CONFIG                 = 0x03
+DATA                   = 0x05
+PACKED_GYRO_DATA       = 0x07
+```
+
+#### BMI270 Register Opcodes
+```
+POWER_MODE             = 0x01
+DATA_INTERRUPT_ENABLE  = 0x02
+CONFIG                 = 0x03
+DATA                   = 0x04
+PACKED_GYRO_DATA       = 0x05
+OFFSET                 = 0x06
+```
+
+#### Config Struct (`GyroBoschConfig`, 2 bytes)
+```
+byte 0:
+  bits 0-3: gyr_odr  (use MblMwGyroBoschOdr enum value directly)
+  bits 4-5: gyr_bwp  (2 = normal)
+  bits 6-7: unused
+byte 1:
+  bits 0-2: gyr_range (0=2000dps, 1=1000dps, 2=500dps, 3=250dps, 4=125dps)
+  bits 3-7: unused
+```
+
+FSR scales (index = `gyr_range`):
+```
+0 -> 16.4   (2000 dps, 1 LSB = 1/16.4 dps)
+1 -> 32.8   (1000 dps)
+2 -> 65.6   (500 dps)
+3 -> 131.2  (250 dps)
+4 -> 262.4  (125 dps)
+```
+
+#### Commands
+
+**Start / Stop:**
+```
+Start BMI160: [0x13, 0x01, 0x01]
+Stop  BMI160: [0x13, 0x01, 0x00]
+Start BMI270: [0x13, 0x01, 0x01]
+Stop  BMI270: [0x13, 0x01, 0x00]
+```
+
+**Enable / Disable data stream:**
+```
+Enable BMI160:  [0x13, 0x02, 0x01, 0x00]
+Disable BMI160: [0x13, 0x02, 0x00, 0x01]
+Enable BMI270:  [0x13, 0x02, 0x01, 0x00]
+Disable BMI270: [0x13, 0x02, 0x00, 0x01]
+```
+
+**Write config (BMI160):**
+```
+[0x13, 0x03, gyr_odr_bwp_byte, gyr_range_byte]
+```
+
+**Write config (BMI270):**
+```
+[0x13, 0x03, gyr_odr_bwp_byte, gyr_range_byte]
+```
+
+**Write offsets (BMI270):**
+```
+[0x13, 0x06, x_offset, y_offset, z_offset]
+```
+
+#### Notification Headers
+
+| Register | Description |
+|---|---|
+| [0x13, 0x05] | BMI160 Rotation XYZ data |
+| [0x13, 0x07] | BMI160 Packed rotation data |
+| [0x13, 0x04] | BMI270 Rotation XYZ data |
+| [0x13, 0x05] | BMI270 Packed rotation data |
+
+#### Response Parsing
+
+**Rotation XYZ** (6 bytes after header, same as accelerometer):
+```kotlin
+val x = (response[2] or (response[3].toInt() shl 8)).toShort() / scale
+val y = (response[4] or (response[5].toInt() shl 8)).toShort() / scale
+val z = (response[6] or (response[7].toInt() shl 8)).toShort() / scale
+```
+
+## 0x14 \- Ambient Light Module
+
+The **Module Opcode** is `0x14`.
+
+The **Ambient Light Module** provides access to the Lite-On **LTR-329ALS** ambient light sensor, available on the **MetaMotionS (MMS)**. It reports illuminance.
+
+Illuminance is returned as an unsigned 32-bit integer in units of **milli-lux** (divide by 1000 to get lux).
+
+The **Config** register maps to the LTR-329 `ALS_CONTR` and `ALS_MEAS_RATE` registers (gain, integration time, and measurement rate).
+
+| Setting              | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                                       |
+| :------------------- | :------ | :--- | :--- | :--- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Module Info          | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                                                                                                       |
+| Enable               | `0x01`  | RW   | 1    | 1    | Byte 0: `0` \= disable, `1` \= enable                                                                                                                                                                                       |
+| Config               | `0x02`  | RW   | 2    | 2    | Maps to the LTR-329 `ALS_CONTR` and `ALS_MEAS_RATE` registers. Byte 0 (`ALS_CONTR`): Bit 0 \= ALS mode (set `0`), Bit 1 \= SW reset (set `0`), Bits 2-4 \= ALS gain Byte 1 (`ALS_MEAS_RATE`): Bits 0-2 \= measurement rate, Bits 3-5 \= integration time |
+| Ambient Light Output | `0x03`  | RN   |      | 4    | Byte 0-3: Ambient light in milli-lux (uint32)                                                                                                                                                                              |
+
+The **ALS Gain** field (Config Byte 0, bits 2-4) — note that gain values jump from `3` to `6` (register values `4` and `5` are unused):
+
+| Value | Gain | Range                  |
+| :---- | :--- | :--------------------- |
+| `0`   | 1x   | [1, 64k] lux (default) |
+| `1`   | 2x   | [0.5, 32k] lux         |
+| `2`   | 4x   | [0.25, 16k] lux        |
+| `3`   | 8x   | [0.125, 8k] lux        |
+| `6`   | 48x  | [0.02, 1.3k] lux       |
+| `7`   | 96x  | [0.01, 600] lux        |
+
+The **Integration Time** field (Config Byte 1, bits 3-5):
+
+| Value | Integration Time |
+| :---- | :--------------- |
+| `0`   | 100 ms (default) |
+| `1`   | 50 ms            |
+| `2`   | 200 ms           |
+| `3`   | 400 ms           |
+| `4`   | 150 ms           |
+| `5`   | 250 ms           |
+| `6`   | 300 ms           |
+| `7`   | 350 ms           |
+
+The **Measurement Rate** field (Config Byte 1, bits 0-2):
+
+| Value | Measurement Rate |
+| :---- | :--------------- |
+| `0`   | 50 ms            |
+| `1`   | 100 ms           |
+| `2`   | 200 ms           |
+| `3`   | 500 ms (default) |
+| `4`   | 1000 ms          |
+| `5`   | 2000 ms          |
 
 ## 0x15 \- Magnetometer Module
 
@@ -690,13 +2142,71 @@ Refer to the [BOSCH BMM150 DATASHEET](https://www.bosch-sensortec.com/products/m
 
 | Setting                   | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                |
 | :------------------------ | :------ | :--- | :--- | :--- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Module Info               | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                                                                                |
-| Mag Power Mode            | `0x01`  | W    | 1    |      | Switch Magnetometer Power modes. **Write**: Byte 0: Value `0x00` \= Suspend Value `0x01` \= Active / Normal                                                                                          |
-| Mag Data Interrupt Enable | `0x02`  | RW   | 2    | 1    | Turn the data ready interrupt ON/OFF. **Write**: Byte 0: Enable Bit Mask (Bit 0: enable mag data ready int) Byte 1: Disable Bit Mask **Read**: Byte 0: Enable Bit Mask                               |
-| Mag Data Rate             | `0x03`  | RW   | 1    | 1    | Output data rate. **Read/Write**: Byte 0: ODR value (uint8\_t, 0 \= 10Hz, 1 \= 2Hz, 2 \= 6Hz, 3 \= 8Hz, 4 \= 15Hz, 5 \= 20Hz, 6 \= 25Hz, 7 \= 30Hz)                                                  |
-| Mag Data Repetitions      | `0x04`  | RW   | 2    | 2    | Repetition settings for XY and Z axes. **Read/Write**: Byte 0: XY Repetitions (uint8\_t, see BMM150 datasheet) Byte 1: Z Repetitions (uint8\_t)                                                      |
-| Mag Data                  | `0x05`  | RN   |      | 6    | Magnetometer data. **Read/Notify**: Byte 0-1: X: int16\_t Byte 2-3: Y: int16\_t Byte 4-5: Z: int16\_t (in units of 0.0625 µT)                                                                        |
-| Packed Mag Data           | `0x09`  | N    |      | 18   | Accumulated Vector Output of Register 0x05. **Notify**: int16\_t (X, Y, Z)\[3\]: Byte 0-1: X Byte 2-3: Y Byte 4-5: Z Byte 6-7: X Byte 8-9: Y Byte 10-11: Z Byte 12-13: X Byte 14-15: Y Byte 16-17: Z |
+| Module Info                | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 2 (uint8\_t)                                                                                                                                                                                |
+| Mag Power Mode             | `0x01`  | W    | 1    |      | Switch Magnetometer Power modes (BMM150 operation mode). **Write**: Byte 0: `0` \= Sleep, `1` \= Normal / Enable, `2` \= Suspend (requires revision ≥ 2). The device boots into suspend mode; Sleep mode must be entered before configuring the sensor. Returning to Suspend (from Normal or Sleep) resets the register settings. |
+| Mag Data Interrupt Enable  | `0x02`  | RW   | 2    | 1    | Turn the data ready interrupt ON/OFF. **Write**: Byte 0: Enable Bit Mask (Bit 0: enable mag data ready int) Byte 1: Disable Bit Mask **Read**: Byte 0: Enable Bit Mask                                                                                              |
+| Mag Data Rate              | `0x03`  | RW   | 1    | 1    | Output data rate. **Read/Write**: Byte 0: ODR value (uint8\_t, 0 \= 10Hz, 1 \= 2Hz, 2 \= 6Hz, 3 \= 8Hz, 4 \= 15Hz, 5 \= 20Hz, 6 \= 25Hz, 7 \= 30Hz)                                                                                                                |
+| Mag Data Repetitions       | `0x04`  | RW   | 2    | 2    | BMM150 *REPXY* and *REPZ* registers. **Read/Write**: Byte 0: XY repetitions — the measurement is averaged (RegValue × 2 + 1) times. Byte 1: Z repetitions — averaged (RegValue + 1) times.                                                                          |
+| Mag Data                   | `0x05`  | RN   |      | 6    | Temperature-compensated magnetometer data. **Read/Notify**: Byte 0-1: X: int16\_t Byte 2-3: Y: int16\_t Byte 4-5: Z: int16\_t (units of 1/16 µT = 0.0625 µT)                                                                                                       |
+| Threshold Interrupt Enable | `0x06`  | RW   | 2    | 1    | Turn the threshold interrupt ON/OFF. **Write**: Byte 0: Enable Bit Mask Byte 1: Disable Bit Mask. Bit Mask: Bit 0: Low Threshold X, Bit 1: Low Threshold Y, Bit 2: Low Threshold Z, Bit 3: High Threshold X, Bit 4: High Threshold Y, Bit 5: High Threshold Z **Read**: Byte 0: Enable Bit Mask |
+| Threshold Config           | `0x07`  | RW   | 2    | 2    | BMM150 threshold registers. **Read/Write**: Byte 0: Low threshold (units of 6 µT) Byte 1: High threshold (units of 6 µT)                                                                                                                                            |
+| Threshold Interrupt        | `0x08`  | N    |      | 1    | *INT\_STATUS* notification bitmask: Bit 0: Low Threshold X, Bit 1: Low Threshold Y, Bit 2: Low Threshold Z, Bit 3: High Threshold X, Bit 4: High Threshold Y, Bit 5: High Threshold Z                                                                               |
+| Packed Mag Data            | `0x09`  | N    |      | 18   | Accumulated Vector Output of Register 0x05. **Notify**: int16\_t (X, Y, Z)\[3\]: Byte 0-1: X Byte 2-3: Y Byte 4-5: Z Byte 6-7: X Byte 8-9: Y Byte 10-11: Z Byte 12-13: X Byte 14-15: Y Byte 16-17: Z                                                                |
+
+
+### Wire-Level Reference: Magnetometer (BMM150)
+
+#### Register Opcodes
+```
+POWER_MODE             = 0x01
+DATA_INTERRUPT_ENABLE  = 0x02
+DATA_RATE              = 0x03
+DATA_REPETITIONS       = 0x04
+MAG_DATA               = 0x05
+PACKED_MAG_DATA        = 0x09
+```
+
+Packed mag data available when module revision >= 1.
+Suspend mode available when module revision >= 2.
+
+#### Commands
+
+**Power / start / stop / suspend:**
+```
+Start:   [0x15, 0x01, 0x01]
+Stop:    [0x15, 0x01, 0x00]
+Suspend: [0x15, 0x01, 0x02]   <- only if revision >= 2
+```
+
+**Enable / Disable data stream:**
+```
+Enable:  [0x15, 0x02, 0x01, 0x00]
+Disable: [0x15, 0x02, 0x00, 0x01]
+```
+
+**Configure (XY reps, Z reps, ODR):**
+```
+[0x15, 0x04, (xy_reps - 1) / 2, z_reps - 1]
+[0x15, 0x03, odr_byte]
+```
+
+Presets:
+```
+LOW_POWER:         xy=3,  z=3,  ODR=10Hz
+REGULAR:           xy=9,  z=15, ODR=10Hz
+ENHANCED_REGULAR:  xy=15, z=27, ODR=10Hz
+HIGH_ACCURACY:     xy=47, z=83, ODR=20Hz
+```
+
+#### Response Parsing
+
+**Mag data** (6 bytes after header):
+```kotlin
+val x = (response[2] or (response[3].toInt() shl 8)).toShort() / 16.0f  // uT
+val y = (response[4] or (response[5].toInt() shl 8)).toShort() / 16.0f
+val z = (response[6] or (response[7].toInt() shl 8)).toShort() / 16.0f
+```
+BMM150_SCALE = 16.0f
 
 ## 0x19 \- Sensor Fusion Module
 
@@ -708,6 +2218,7 @@ The sensor fusion algorithm runs entirely on the MetaWear and outputs calibrated
 
 The fusion modes are:
 
+* Mode `0x00`: Sleep \- Fusion is idle.
 * Mode `0x01`: NDOF (Nine Degrees of Freedom) \- Uses accelerometer, gyroscope, and magnetometer. All outputs available.
 * Mode `0x02`: IMU Plus \- Uses accelerometer and gyroscope only. Quaternion, Euler, gravity, and linear acceleration outputs available.
 * Mode `0x03`: Compass \- Uses accelerometer and magnetometer. Heading output available.
@@ -715,22 +2226,24 @@ The fusion modes are:
 
 | Setting           | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                                                 |
 | :---------------- | :------ | :--- | :--- | :--- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Module Info       | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t)                                                                                                                                                 |
-| Enable            | `0x01`  | RW   | 1    | 1    | Byte 0: Enable (0 \= disable, 1 \= enable sensor fusion)                                                                                                                                                                              |
-| Mode              | `0x02`  | RW   | 4    | 4    | Byte 0: Fusion Mode (uint8\_t, 1 \= NDOF, 2 \= IMU Plus, 3 \= Compass, 4 \= M4G) Byte 1: Acc Range (uint8\_t) Byte 2: Gyro Range (uint8\_t) Byte 3: Reserved                                                                          |
-| Output Enable     | `0x03`  | RW   | 2    | 1    | **Write**: Byte 0: Enable Bit Mask Byte 1: Disable Bit Mask (Bit 0: Corrected Acc, Bit 1: Corrected Gyro, Bit 2: Corrected Mag, Bit 3: Quaternion, Bit 4: Euler, Bit 5: Gravity, Bit 6: Linear Acc) **Read**: Byte 0: Enable Bit Mask |
-| Corrected Acc     | `0x04`  | N    |      | 12   | Corrected accelerometer data. **Notify**: Byte 0-3: X: float Byte 4-7: Y: float Byte 8-11: Z: float (in units of g)                                                                                                                   |
-| Corrected Gyro    | `0x05`  | N    |      | 12   | Corrected gyroscope data. **Notify**: Byte 0-3: X: float Byte 4-7: Y: float Byte 8-11: Z: float (in units of °/s)                                                                                                                     |
-| Corrected Mag     | `0x06`  | N    |      | 12   | Corrected magnetometer data. **Notify**: Byte 0-3: X: float Byte 4-7: Y: float Byte 8-11: Z: float (in units of µT)                                                                                                                   |
-| Quaternion        | `0x07`  | N    |      | 16   | Orientation as quaternion. **Notify**: Byte 0-3: W: float Byte 4-7: X: float Byte 8-11: Y: float Byte 12-15: Z: float                                                                                                                 |
-| Euler Angles      | `0x08`  | N    |      | 12   | Orientation as Euler angles. **Notify**: Byte 0-3: Heading / Yaw: float (°) Byte 4-7: Pitch: float (°) Byte 8-11: Roll: float (°)                                                                                                     |
-| Gravity Vector    | `0x09`  | N    |      | 12   | Gravity direction vector. **Notify**: Byte 0-3: X: float Byte 4-7: Y: float Byte 8-11: Z: float (in units of g)                                                                                                                       |
-| Linear Acc        | `0x0A`  | N    |      | 12   | Linear acceleration (without gravity). **Notify**: Byte 0-3: X: float Byte 4-7: Y: float Byte 8-11: Z: float (in units of g)                                                                                                          |
-| Calibration State | `0x0B`  | R    |      | 3    | Byte 0: Accelerometer Calibration Accuracy (uint8\_t, 0 \= unreliable, 3 \= high) Byte 1: Gyroscope Calibration Accuracy (uint8\_t) Byte 2: Magnetometer Calibration Accuracy (uint8\_t)                                              |
-| Acc Cal Data      | `0x0C`  | RW   | 18   | 18   | Accelerometer calibration data for save/restore across sessions                                                                                                                                                                       |
-| Gyro Cal Data     | `0x0D`  | RW   | 18   | 18   | Gyroscope calibration data for save/restore across sessions                                                                                                                                                                           |
-| Mag Cal Data      | `0x0E`  | RW   | 18   | 18   | Magnetometer calibration data for save/restore across sessions                                                                                                                                                                        |
-| Reset Orientation | `0x0F`  | W    |      |      | No value required \- Resets the orientation to the current position                                                                                                                                                                   |
+| Module Info             | `0x00`  | R    |      | 10   | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 3 (uint8\_t) Byte 2-9: Sensor fusion library version                                                                                                            |
+| Enable                  | `0x01`  | RW   | 1    | 1    | Byte 0: 0 \= disabled, 1 \= enabled. This gates execution; rewriting Enable resets the library state.                                                                                                                                  |
+| Mode                    | `0x02`  | RW   | 2    | 2    | Byte 0: Working mode (0 \= Sleep, 1 \= NDoF, 2 \= IMUPlus, 3 \= Compass, 4 \= M4G) Byte 1: Bits 0-3 \= Accel range (0 \= 2G, 1 \= 4G, 2 \= 8G, 3 \= 16G), Bits 4-7 \= Gyro range, transmitted as (value + 1) where value 0 \= 2048, 1 \= 2000, 2 \= 1000, 3 \= 500, 4 \= 250 DPS. Changing the mode resets the library state. |
+| Output Enable           | `0x03`  | RW   | 2    | 1    | **Write**: Byte 0: Enable Bit Mask Byte 1: Disable Bit Mask. Bit 0: Corrected Acc, Bit 1: Corrected Gyro, Bit 2: Corrected Mag, Bit 3: Quaternion, Bit 4: Euler, Bit 5: Gravity, Bit 6: Linear Acc **Read**: Byte 0: Enable Bit Mask |
+| Corrected Accelerometer | `0x04`  | N    |      | 13   | **Notify**: Byte 0-11: float (x, y, z) in mg Byte 12: Calibration accuracy (0 \= unreliable, 1 \= low, 2 \= medium, 3 \= high)                                                                                                          |
+| Corrected Gyroscope     | `0x05`  | N    |      | 13   | **Notify**: Byte 0-11: float (x, y, z) in °/s Byte 12: Calibration accuracy (0-3)                                                                                                                                                     |
+| Corrected Magnetometer  | `0x06`  | N    |      | 13   | **Notify**: Byte 0-11: float (x, y, z) in µT Byte 12: Calibration accuracy (0-3)                                                                                                                                                      |
+| Quaternion              | `0x07`  | N    |      | 16   | **Notify**: Byte 0-15: float (w, x, y, z)                                                                                                                                                                                             |
+| Euler Angles            | `0x08`  | N    |      | 16   | **Notify**: Byte 0-15: float (heading, pitch, roll, yaw) in degrees                                                                                                                                                                   |
+| Gravity Vector          | `0x09`  | N    |      | 12   | **Notify**: Byte 0-11: float (x, y, z) in m/s²                                                                                                                                                                                        |
+| Linear Acceleration     | `0x0A`  | N    |      | 12   | **Notify**: Byte 0-11: float (x, y, z) in m/s²                                                                                                                                                                                        |
+| Calibration State       | `0x0B`  | R    |      | 3    | Byte 0: Accel accuracy Byte 1: Gyro accuracy Byte 2: Mag accuracy (each 0 \= unreliable, 1 \= low, 2 \= medium, 3 \= high)                                                                                                             |
+| Accel Cal Data          | `0x0C`  | RW   | 10   | 10   | int16\_t array (x, y, z, radius, accuracy). Once accuracy reaches 3, read this register and store it; write it back to restore. The next sensor fusion mode change reloads the calibration data.                                       |
+| Gyro Cal Data           | `0x0D`  | RW   | 10   | 10   | Same format as Accel Cal Data.                                                                                                                                                                                                        |
+| Mag Cal Data            | `0x0E`  | RW   | 10   | 10   | Same format as Accel Cal Data. Writing data with a calibration accuracy below 3 will crash when it is loaded.                                                                                                                          |
+| Reset Orientation       | `0x0F`  | W    | 1    |      | Byte 0: Write `0x01` to reset the sensor fusion orientation (requires revision ≥ 3)                                                                                                                                                    |
+
+**Units note** (resolved against MetaWear-SDK-Cpp): the wire format for Gravity Vector (`0x09`) and Linear Acceleration (`0x0A`) is float **m/s²**; the SDKs divide by 9.80665 (`MSS_TO_G_SCALE`) to present values in g. Corrected Accelerometer (`0x04`) is sent in **mg**; the SDKs divide by 1000 (`SENSOR_FUSION_ACC_SCALE`) to present g.
 
 ### Fusion Mode Details
 
@@ -741,7 +2254,7 @@ Each fusion mode uses a different combination of sensors and produces data at di
 | NDoF     | 0x01 | Accelerometer, Gyro, Mag   | 100 Hz   | 100 Hz    | 25 Hz    | Absolute         |
 | IMU Plus | 0x02 | Accelerometer, Gyro        | 100 Hz   | 100 Hz    | N/A      | Relative         |
 | Compass  | 0x03 | Accelerometer, Mag         | 25 Hz    | N/A       | 25 Hz    | Absolute         |
-| M4G      | 0x04 | Accelerometer, Mag         | 50 Hz    | N/A       | 50 Hz    | Relative         |
+| M4G      | 0x04 | Accelerometer, Mag         | 50 Hz    | N/A       | 25 Hz    | Relative         |
 
 **NDoF** (Nine Degrees of Freedom) calculates absolute orientation from all three sensors. It provides fast output with high robustness against magnetic field distortions. Fast Magnetometer calibration is enabled in this mode. After magnetic calibration is complete, heading reads 0° when facing magnetic north.
 
@@ -773,20 +2286,275 @@ In IMU Plus mode, pitch and roll drift are compensated by the accelerometer sens
 
 The sensor fusion algorithm is optimized for tracking human motion. Under sustained large accelerations (e.g., vehicle cornering), the algorithm may incorrectly interpret the acceleration as gravity. Test the device for your specific use case if high\-acceleration environments are expected.
 
+
+### Wire-Level Reference: Sensor Fusion
+
+#### Register Opcodes
+```
+ENABLE             = 0x01
+MODE               = 0x02
+OUTPUT_ENABLE      = 0x03
+CORRECTED_ACC      = 0x04
+CORRECTED_GYRO     = 0x05
+CORRECTED_MAG      = 0x06
+QUATERNION         = 0x07
+EULER_ANGLES       = 0x08
+GRAVITY_VECTOR     = 0x09
+LINEAR_ACC         = 0x0A
+CALIBRATION_STATE  = 0x0B
+ACC_CAL_DATA       = 0x0C
+GYRO_CAL_DATA      = 0x0D
+MAG_CAL_DATA       = 0x0E
+RESET_ORIENTATION  = 0x0F
+```
+
+#### Config Struct (`SensorFusionState.config`, 2 bytes)
+```
+byte 0: mode      (MblMwSensorFusionMode: 0=SLEEP, 1=NDOF, 2=IMU_PLUS, 3=COMPASS, 4=M4G)
+byte 1:
+  bits 0-3: acc_range  (0=2g, 1=4g, 2=8g, 3=16g)
+  bits 4-7: gyro_range (enum+1: 1=2000dps, 2=1000dps, 3=500dps, 4=250dps, 5=125dps)
+```
+
+#### Enable mask bits
+```
+bit 0: CORRECTED_ACC
+bit 1: CORRECTED_GYRO
+bit 2: CORRECTED_MAG
+bit 3: QUATERNION
+bit 4: EULER_ANGLES
+bit 5: GRAVITY_VECTOR
+bit 6: LINEAR_ACC
+```
+
+#### Underlying-sensor requirements per mode
+
+The fusion algorithm is fed by the on-board acc / gyro / mag modules. Each mode dictates which sensors must be running and at what rate; the host must configure and start each underlying sensor in addition to the fusion module itself.
+
+| Mode      | Acc                | Gyro          | Mag             |
+|-----------|--------------------|---------------|-----------------|
+| `SLEEP`   | —                  | —             | —               |
+| `NDOF`    | 100 Hz, host range | 100 Hz, host range | 25 Hz, xy=9, z=15 |
+| `IMU_PLUS`| 100 Hz, host range | 100 Hz, host range | —               |
+| `COMPASS` | 25 Hz,  host range | —             | 25 Hz, xy=9, z=15 |
+| `M4G`     | 50 Hz,  host range | —             | 25 Hz, xy=9, z=15 |
+
+Mag preset is fixed by the firmware: `xy_reps = 9`, `z_reps = 15`, ODR = 25 Hz → `[0x15, 0x04, 0x04, 0x0E]` followed by `[0x15, 0x03, 0x06]`.
+
+#### Commands
+
+The lifecycle for configuring, starting, and stopping sensor fusion follows this sequence of BLE commands:
+
+**Write fusion config:**
+```
+[0x19, 0x02, mode_byte, range_byte]
+```
+where `range_byte = acc_range | ((gyro_range + 1) << 4)`.
+
+**Enable output mask:**
+```
+[0x19, 0x03, enable_mask, 0x00]
+```
+`enable_mask` is the per-signal bit (see *Enable mask bits* above). Multiple bits may be set to subscribe to several outputs from the same fusion run.
+
+**Start / Stop the fusion algorithm:**
+```
+Start: [0x19, 0x01, 0x01]
+Stop:  [0x19, 0x01, 0x00]
+```
+
+**Clear output mask** (issued during stop, before stopping the underlying sensors):
+```
+[0x19, 0x03, 0x00, 0x7F]
+```
+
+##### Full configure sequence (NDOF, BMI160, ±2g / ±2000 dps shown)
+
+```
+[0x19, 0x02, 0x01, 0x10]   # fusion mode = NDOF, ranges packed
+[0x03, 0x03, 0x28, 0x03]   # acc 100 Hz, ±2g (BMI160: conf=0x28, range bitmask=0x03)
+[0x13, 0x03, 0x28, 0x00]   # gyro 100 Hz, ±2000 dps
+[0x15, 0x04, 0x04, 0x0E]   # mag repetitions: xy=9, z=15
+[0x15, 0x03, 0x06]         # mag ODR = 25 Hz
+```
+
+For **BMI270** the acc command differs: `[0x03, 0x03, 0xA8, 0x00]` (filter_perf bit 7 set, 0-based range).
+
+For `IMU_PLUS` the two mag commands are omitted. For `COMPASS` and `M4G` the gyro command is omitted (and the acc ODR is 25 Hz / 50 Hz respectively → conf = `0x26` / `0x27` on BMI160, `0xA6` / `0xA7` on BMI270).
+
+##### Full start sequence (NDOF + quaternion shown)
+
+```
+# Underlying sensors first — interrupt enables, then start
+[0x03, 0x02, 0x01, 0x00]   # acc data interrupt enable
+[0x13, 0x02, 0x01, 0x00]   # gyro data interrupt enable
+[0x15, 0x02, 0x01, 0x00]   # mag data interrupt enable
+[0x03, 0x01, 0x01]         # acc start
+[0x13, 0x01, 0x01]         # gyro start
+[0x15, 0x01, 0x01]         # mag start
+
+# Fusion last — enable mask then start the algorithm
+[0x19, 0x03, 0x08, 0x00]   # output_enable: bit 3 = QUATERNION
+[0x19, 0x01, 0x01]         # fusion start
+```
+
+`IMU_PLUS` skips the mag enable + mag start. `COMPASS` and `M4G` skip the gyro enable + gyro start.
+
+##### Full stop sequence (NDOF shown)
+
+Reverses the start: fusion off + mask cleared first, then underlying sensors are stopped + interrupts disabled.
+
+```
+[0x19, 0x01, 0x00]         # fusion stop
+[0x19, 0x03, 0x00, 0x7F]   # output_enable: clear all bits
+
+[0x03, 0x01, 0x00]         # acc stop
+[0x13, 0x01, 0x00]         # gyro stop
+[0x15, 0x01, 0x00]         # mag stop
+
+[0x03, 0x02, 0x00, 0x01]   # acc data interrupt disable
+[0x13, 0x02, 0x00, 0x01]   # gyro data interrupt disable
+[0x15, 0x02, 0x00, 0x01]   # mag data interrupt disable
+```
+
+A common host bug is to send only the fusion config + start (`[0x19, 0x02, …]` and `[0x19, 0x01, 0x01]`) without configuring or starting the underlying acc / gyro / mag — the fusion algorithm runs but produces no output because it never sees any input samples.
+
+**Read config:**
+```
+[0x19, 0x82]   <- READ_REGISTER(MODE) = 0x82
+```
+
+**Read calibration state:**
+```
+[0x19, 0x8B]   <- READ_REGISTER(CALIBRATION_STATE) = 0x8B
+```
+
+**Read calibration data (chain of 3 reads):**
+```
+[0x19, 0x8C]   <- READ_REGISTER(ACC_CAL_DATA)
+Response -> [0x19, 0x8C, <10 bytes acc cal>]
+Then send:
+[0x19, 0x8D]   <- READ_REGISTER(GYRO_CAL_DATA)
+Response -> [0x19, 0x8D, <10 bytes gyro cal>]
+Then send:
+[0x19, 0x8E]   <- READ_REGISTER(MAG_CAL_DATA)
+Response -> [0x19, 0x8E, <10 bytes mag cal>]
+```
+
+#### Response Parsing
+
+**Corrected Accelerometer** (13 bytes after header):
+```kotlin
+// First 12 bytes = 3x float32 (x, y, z in mg), last byte = accuracy
+val x = ByteBuffer.wrap(response, 2, 4).order(LITTLE_ENDIAN).float / 1000f  // SENSOR_FUSION_ACC_SCALE
+val y = ByteBuffer.wrap(response, 6, 4).order(LITTLE_ENDIAN).float / 1000f
+val z = ByteBuffer.wrap(response, 10, 4).order(LITTLE_ENDIAN).float / 1000f
+val accuracy = response[14]
+```
+
+**Corrected Gyro / Corrected Mag** (13 bytes after header):
+```kotlin
+// 3x float32, same layout; no divide (direct float), last byte = accuracy
+val x = ByteBuffer.wrap(response, 2, 4).order(LITTLE_ENDIAN).float
+val y = ByteBuffer.wrap(response, 6, 4).order(LITTLE_ENDIAN).float
+val z = ByteBuffer.wrap(response, 10, 4).order(LITTLE_ENDIAN).float
+val accuracy = response[14]
+```
+
+**Quaternion** (16 bytes after header = 4x float32):
+```kotlin
+val w = ByteBuffer.wrap(response, 2, 4).order(LITTLE_ENDIAN).float
+val x = ByteBuffer.wrap(response, 6, 4).order(LITTLE_ENDIAN).float
+val y = ByteBuffer.wrap(response, 10, 4).order(LITTLE_ENDIAN).float
+val z = ByteBuffer.wrap(response, 14, 4).order(LITTLE_ENDIAN).float
+```
+
+**Euler Angles** (16 bytes = 4x float32):
+```kotlin
+val heading = ByteBuffer.wrap(response, 2, 4).order(LITTLE_ENDIAN).float
+val pitch   = ByteBuffer.wrap(response, 6, 4).order(LITTLE_ENDIAN).float
+val roll    = ByteBuffer.wrap(response, 10, 4).order(LITTLE_ENDIAN).float
+val yaw     = ByteBuffer.wrap(response, 14, 4).order(LITTLE_ENDIAN).float
+```
+
+**Gravity Vector / Linear Acceleration** (12 bytes = 3x float32):
+```kotlin
+val x = ByteBuffer.wrap(response, 2, 4).order(LITTLE_ENDIAN).float / 9.80665f  // MSS_TO_G_SCALE
+val y = ByteBuffer.wrap(response, 6, 4).order(LITTLE_ENDIAN).float / 9.80665f
+val z = ByteBuffer.wrap(response, 10, 4).order(LITTLE_ENDIAN).float / 9.80665f
+```
+
+**Calibration state** (3 bytes after header):
+```kotlin
+val acc_cal  = response[2]
+val gyro_cal = response[3]
+val mag_cal  = response[4]
+// Values 0-3 (0=uncalibrated, 3=fully calibrated)
+```
+
 ## 0xFE \- Debug Module
 
 The **Module Opcode** is `0xFE`.
 
-The **Debug Module** provides diagnostic and maintenance commands for the MetaWear. It can be used to reset the device, jump to the bootloader for firmware updates, or trigger a watchdog reset.
+The **Debug Module** (also called the **Test** module) provides diagnostic and maintenance commands for the MetaWear — resetting the device, jumping to the bootloader for firmware updates, entering power-save mode, reading the last reset reason, and reporting NAND flash health.
 
-| Setting            | Address | Mode | Wlen | Rlen | Value                                                                                 |
-| :----------------- | :------ | :--- | :--- | :--- | :------------------------------------------------------------------------------------ |
-| Module Info        | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 0+ (uint8\_t) |
-| Reset              | `0x01`  | W    |      |      | No value required \- Performs a soft reset of the device                              |
-| Jump to Bootloader | `0x02`  | W    |      |      | No value required \- Jumps to the bootloader for firmware update (DFU mode)           |
-| Disconnect         | `0x06`  | W    |      |      | No value required \- Forces a BLE disconnect                                          |
-| Reset After GC     | `0x05`  | W    |      |      | No value required \- Resets the device after performing garbage collection on flash   |
-| Stack Overflow     | `0x03`  | W    |      |      | No value required \- For testing: triggers a stack overflow (debug only)              |
+| Setting                   | Address | Mode | Wlen | Rlen | Value                                                                                                                                                                                                                                                  |
+| :------------------------ | :------ | :--- | :--- | :--- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Module Info               | `0x00`  | R    |      | 2    | Byte 0: Module Implementation ID: 0 (uint8\_t) Byte 1: Module Revision: 6 (uint8\_t)                                                                                                                                                                   |
+| Reset Device              | `0x01`  | W    | 0    |      | Performs a soft reset of the device                                                                                                                                                                                                                   |
+| Jump to Bootloader        | `0x02`  | W    | 0    |      | Jumps to the bootloader for firmware update (DFU mode)                                                                                                                                                                                                |
+| Notification Spoofer      | `0x03`  | W    | 18   |      | Spoof a module notification. Byte 0: Module ID Byte 1: Register ID Byte 2: Notification Enable Byte 3: Optional Index Byte 4+: Data                                                                                                                    |
+| Key Register              | `0x04`  | RW   | 4    | 4    | 4-byte scratch register (uint32) that persists until reset                                                                                                                                                                                            |
+| Delayed Reset             | `0x05`  | W    | 0    |      | Flags a reset to occur before the next advertising start (after garbage collection)                                                                                                                                                                   |
+| GAP Disconnect            | `0x06`  | W    | 0    |      | Triggers a GAP (BLE) disconnect                                                                                                                                                                                                                       |
+| Enter Powersave on Reset  | `0x07`  | W    | 0    |      | Sets a flag to enter power-down mode on the next reset (after resetting all sensors at boot). A switch press wakes it (some boards override the wake pin, e.g. charge status). Does not perform the reset itself — follow with Reset or Delayed Reset. Exiting power-down performs a full reboot. |
+| App Invalidate            | `0x08`  | W    | 0    |      | Marks the application image as invalid so the bootloader does not boot it on the next reset (the device stays in DFU mode until a new image is flashed). Firmware-internal: the SDK Debug register enum skips `0x08` and no SDK exposes it. Do not use in normal operation.                                          |
+| Stack Overflow Debug      | `0x09`  | RW   | 1    | 3    | **Write**: Enable "assert on overflow" (`0` = disable, `1` = enable) **Read**: Byte 0: state of "assert on overflow" Byte 1-2: margin to overflow — length in bytes between the stack boundary and the first non-zero value on the stack             |
+| Schedule Queue Usage      | `0x0A`  | R    |      | var  | **Read**: param Byte 0 (`0` = present usage, `1` = allocated size). Response: peak usage of each scheduler FIFO; the last three report minimum remaining, the rest report maximum usage.                                                              |
+| Reset Reason              | `0x0B`  | R    |      | 4    | Bitmask of the last reset cause. Byte 0: Bit 0 = reset-pin reset, Bit 1 = watchdog reset, Bit 2 = software reset, Bit 3 = CPU lockup reset. Byte 2: Bit 0 = system-off wakeup from GPIO, Bit 1 = from low-power comparator, Bit 2 = from debug interface, Bit 3 = from NFC (nRF52). No bits set = power-on or brownout reset. |
+| DC/DC Mode                | `0x0C`  | W    | 1    |      | Byte 0: `0` = disable, `1` = enable the DC/DC converter. No-op if the board does not support DC/DC.                                                                                                                                                   |
+| NVM Serial                | `0x0D`  |      |      |      | Reserved / not yet documented                                                                                                                                                                                                                         |
+| NVM Auth Sig              | `0x0E`  |      |      |      | Reserved / not yet documented                                                                                                                                                                                                                         |
+| NVM Auth Sig Verify       | `0x0F`  |      |      |      | Reserved / not yet documented                                                                                                                                                                                                                         |
+| HW GAP Address            | `0x10`  |      |      |      | Reserved / not yet documented                                                                                                                                                                                                                         |
+| HW Device ID              | `0x11`  |      |      |      | Reserved / not yet documented                                                                                                                                                                                                                         |
+| GPIO Backdoor             | `0x12`  |      |      |      | Internal — not exposed                                                                                                                                                                                                                                |
+| NAND Stats                | `0x13`  | R    |      | 14   | NAND flash ECC statistics. Byte 0-3: page reads with no correction (uint32) Byte 4-5: 1-3 bits corrected Byte 6-7: 4-6 bits corrected Byte 8-9: 7-8 bits corrected Byte 10-11: 9+ bit (uncorrectable) errors Byte 12-13: page reads uncorrectable after retries (uint16 each) |
+
+
+### Wire-Level Reference: Debug
+
+#### Register Opcodes
+```
+RESET             = 0x01
+BOOTLOADER        = 0x02
+NOTIFICATION_SPOOF= 0x03
+KEY_REGISTER      = 0x04
+RESET_GC          = 0x05
+DISCONNECT        = 0x06
+POWER_SAVE        = 0x07
+STACK_OVERFLOW    = 0x09
+SCHEDULE_QUEUE    = 0x0A
+```
+
+#### Commands
+```
+Reset:                        [0xFE, 0x01]
+Jump to bootloader:           [0xFE, 0x02]
+Spoof notification:           [0xFE, 0x03, ...bytes...]
+Set key register:             [0xFE, 0x04, val_byte0, val_byte1, val_byte2, val_byte3]
+Reset after GC:               [0xFE, 0x05]
+Disconnect:                   [0xFE, 0x06]
+Enable power save:            [0xFE, 0x07]
+Set stack overflow assertion: [0xFE, 0x09, enable_byte]
+Read stack overflow:          [0xFE, 0x89]   <- READ_REGISTER(0x09)
+Read schedule queue:          [0xFE, 0x8A]   <- READ_REGISTER(0x0A)
+```
+
+**Fake button event:**
+```
+[0xFE, 0x03, 0x01, 0x01, 0x00, value]
+```
 
 ## Board Models
 
@@ -804,11 +2572,11 @@ MetaWear boards come in several models, each with different sensor configuration
 | MetaHealth         | 7          | BMI160        | BMI160    | No           | No        | On-die      | No            |
 | MetaTracker        | 8          | BMI160        | BMI160    | BMM150       | BMP280    | On-die, Thermistor, BMP280 | No |
 | MetaMotion R       | 9          | BMI160        | BMI160    | BMM150       | BMP280    | On-die, Thermistor, BMP280 | Yes |
-| MetaMotion RL      | 10         | BMI160        | BMI160    | BMM150       | BMP280    | On-die, Thermistor, BMP280 | Yes |
+| MetaMotion RL      | 10         | BMI160        | BMI160    | BMM150       | No        | On-die, Thermistor | Yes |
 | MetaMotion C       | 11         | BMI160        | BMI160    | BMM150       | BMP280    | On-die, Thermistor, BMP280 | Yes |
 | MetaMotion S       | 12         | BMI270        | BMI270    | BMM150       | BMP280    | On-die, Thermistor, BMP280 | Yes |
 
-The MetaMotion S (MMS) is the newest board and uses the BMI270 IMU. The MetaMotion RL (MMRL) and earlier boards use the BMI160. Older boards (MetaWear R, MetaWear C) use the MMA8452Q accelerometer which has a completely different register set (see the MMA8452Q section below).
+The MetaMotion S (MMS) is the newest board and uses the BMI270 IMU. The MetaMotion RL (MMRL) and earlier boards use the BMI160. Older boards (MetaWear R, MetaWear C) used the MMA8452Q accelerometer; these boards are no longer supported and the MMA8452Q is not covered by this specification.
 
 ### Active Board Hardware Specifications
 
@@ -819,14 +2587,14 @@ The two currently supported MetaSensor boards are:
 | Battery          | 100mAh rechargeable Li-Po                     | 100mAh rechargeable Li-Po                                  |
 | Battery Life     | 1 \- 14 days (usage dependent)                | 8 \- 24 days (usage dependent)                             |
 | Physical Size    | 17mm x 25mm x 5mm                             | 17mm x 25mm x 5mm                                         |
-| Log Memory       | 8MB (~0.5M log entries)                        | 512MB (~30M log entries)                                   |
+| Log Memory       | 8MB (~1M log entries)                          | 512MB (~67M log entries)                                   |
 | Accelerometer    | BMI160                                         | BMI270                                                     |
 | Gyroscope        | BMI160                                         | BMI270                                                     |
 | Magnetometer     | BMM150                                         | BMM150                                                     |
 | Barometer / Temp | BMP280                                         | BMP280                                                     |
 | Ambient Light    | None                                           | LTR\-329ALS\-01                                            |
 | Charging         | Micro\-USB                                     | Micro\-USB                                                 |
-| MCU              | ARM (Nordic nRF52)                             | ARM (Nordic nRF52)                                         |
+| MCU              | Nordic nRF52832 (ARM Cortex-M4F, 512kB flash, 64kB RAM) | Nordic nRF52840 (ARM Cortex-M4F, 1MB flash, 256kB RAM) |
 
 Streaming sensor data consumes more battery than logging because the active BLE connection draws additional power. When logging, the device can operate disconnected; however, downloading large logs after reconnection can take hours depending on the amount of data stored.
 
@@ -883,12 +2651,11 @@ The available output data rates (ODR) for each sensor, configurable via the sens
 
 | Chip                | Available ODR (Hz)                                    |
 | :------------------ | :---------------------------------------------------- |
-| BMI160 (MMRL)       | 12.5, 25, 50, 100, 200, 400, 800                     |
-| BMI270 (MMS)        | 12.5, 25, 50, 100, 200, 400, 800                     |
+| BMI160 (MMRL)       | 0.78125, 1.5625, 3.125, 6.25, 12.5, 25, 50, 100, 200, 400, 800, 1600 |
+| BMI270 (MMS)        | 0.78125, 1.5625, 3.125, 6.25, 12.5, 25, 50, 100, 200, 400, 800, 1600 |
 | BMA255 (MetaEnv/Det)| 15.62, 31.26, 62.5, 125, 250, 500                    |
-| MMA8452Q (MW R/C)   | 1.56, 6.25, 12.5, 50, 100, 200, 400, 800             |
 
-**Gyroscope** (BMI160 / BMI270): 25, 50, 100, 200, 400, 800 Hz
+**Gyroscope** (BMI160 / BMI270): 25, 50, 100, 200, 400, 800, 1600, 3200 Hz
 
 **Magnetometer** (BMM150): 10, 15, 20, 25 Hz
 
@@ -896,11 +2663,11 @@ The available output data rates (ODR) for each sensor, configurable via the sens
 
 **Barometer** (BME280, MetaTracker): 0.99, 1.96, 3.82, 7.33, 13.5, 31.8, 46.5, 83.3 Hz
 
-**Ambient Light** (LTR\-329ALS\-01, MMS only): 0.5, 1, 2, 5, 10 Hz
+**Ambient Light** (LTR\-329ALS\-01, MMS only): 0.5, 1, 2, 5, 10, 20 Hz
 
 **Temperature**: No fixed ODR. Temperature is read on demand or via a timer. Common polling intervals: 1s, 15s, 30s, 1m, 15m, 30m, 1hr.
 
-**Sensor Fusion Outputs** (Euler, Quaternion, Gravity, Linear Acc): Fixed at 100 Hz (determined by the fusion mode, not independently configurable).
+**Sensor Fusion Outputs** (Euler, Quaternion, Gravity, Linear Acc): Fixed by the fusion mode, not independently configurable — 100 Hz in NDoF and IMUPlus, 25 Hz in Compass, 50 Hz in M4G (±1%).
 
 ### Sensor Power Consumption
 
@@ -911,8 +2678,8 @@ Approximate current draw per sensor when active (excluding BLE overhead):
 | Accelerometer BMI160  | 0.18               |
 | Accelerometer BMI270  | 0.21               |
 | Accelerometer BMA255  | 0.13               |
-| Accelerometer MMA8452Q| 0.165              |
-| Gyroscope             | 0.5                |
+| Gyroscope BMI160      | 0.9                |
+| Gyroscope BMI270      | 0.5                |
 | Magnetometer          | 0.5                |
 | Temperature           | 0.01               |
 | Pressure (BMP280)     | 0.0034             |
@@ -928,7 +2695,9 @@ Approximate current draw per sensor when active (excluding BLE overhead):
 
 ## Data Processor Filter Configuration
 
-When creating a filter via the **Data Processor Module** (0x09) **Add** register (0x02), the filter configuration bytes (bytes 4+) are structured differently for each filter type. This section details the byte layout for each filter.
+When creating a filter via the **Data Processor Module** (0x09) **Add** register (0x02), the filter configuration bytes (Byte 4 onward of the **Add / Create** command) are structured differently for each filter type. This section details the per-filter configuration byte layout; the byte tables below are numbered from byte 0 of the configuration.
+
+The Type IDs are **non-contiguous** — refer to the Filter Type table in the Data Processor Module section above for the canonical list (`0x01`, `0x02`, `0x03`, `0x06`–`0x0D`, `0x0F`–`0x11`, `0x1B`). The subsections below are grouped for readability and are not in strict numeric order.
 
 ### Passthrough (Type 0x01)
 
@@ -967,7 +2736,7 @@ Computes a running average using a recursive algorithm that uses minimal memory.
 
 **State (Set/Reset)**: No parameters \- resets the running average.
 
-### Pulse Detector (Type 0x04)
+### Pulse Detector (Type 0x0B)
 
 Detects pulses (peaks above a threshold for a minimum width) in the input data.
 
@@ -978,20 +2747,6 @@ Detects pulses (peaks above a threshold for a minimum width) in the input data.
 | 2    | Output Mode           | uint8\_t | What to output when pulse detected                                 |
 | 3-6  | Threshold             | 4 bytes  | Minimum value for pulse detection                                  |
 | 7-8  | Width                 | uint16\_t | Minimum pulse width in samples                                    |
-
-### Peak Detector (Type 0x05)
-
-Detects local maxima or minima in the input data stream.
-
-| Byte | Field           | Size     | Description                                                                      |
-| :--- | :-------------- | :------- | :------------------------------------------------------------------------------- |
-| 0    | Look Ahead      | uint8\_t | Number of samples to look ahead for a bigger peak                                |
-| 1    | Looking For Max | uint8\_t | 0 \= detect min peaks, 1 \= detect max peaks                                    |
-| 2    | Extra Peak Width| uint8\_t | Number of samples to sum on both sides of the peak (becomes output value)        |
-| 3-6  | Delta           | 4 bytes  | Minimum delta that must occur before a peak is considered                         |
-| 7    | Offset          | uint8\_t | Offset in bytes from beginning of input data                                     |
-| 8    | Length          | uint8\_t | Length of input data in bytes                                                     |
-| 9    | Is Signed       | uint8\_t | 0 \= unsigned input, 1 \= signed input                                          |
 
 ### Comparator (Type 0x06)
 
@@ -1014,9 +2769,9 @@ Compares input data against one or more reference values and only passes data th
 | 0 [1-2]  | Length     | 2 bits  | Data length encoding                                                                                      |
 | 0 [3-5]  | Operation  | 3 bits  | 0 \= EQ, 1 \= NEQ, 2 \= LT, 3 \= LTE, 4 \= GT, 5 \= GTE                                               |
 | 0 [6-7]  | Mode       | 2 bits  | 0 \= Absolute (return data as-is), 1 \= Reference (return matched ref), 2 \= Zone (return ref index), 3 \= Binary (return 1/0) |
-| 1-12     | References | 12 bytes| Up to 3 reference values (4 bytes each)                                                                   |
+| 1-12     | References | 1 byte each | Buffer processor (filter) IDs of the input sources, one byte each, up to 12 (matches `FuseConfig.references[12]` in MetaWear-SDK-Cpp) |
 
-### RMS / RSS (Type 0x07 / 0x08)
+### RMS / RSS (Type 0x07)
 
 Computes the Root Mean Square (RMS) or Root Sum Square (RSS) of multi-component data (e.g., XYZ accelerometer data into a single magnitude value).
 
@@ -1066,7 +2821,7 @@ Delays data by a fixed number of samples (FIFO buffer).
 | 0    | Length   | uint8\_t | Length of each sample in bytes |
 | 1    | Bin Size | uint8\_t | Number of samples to buffer    |
 
-### Threshold (Type 0x0B)
+### Threshold (Type 0x0D)
 
 Detects when data crosses a threshold boundary.
 
@@ -1089,7 +2844,7 @@ Detects when data changes by a specified magnitude from the last reported value.
 | 0 [3-5]  | Mode       | 3 bits  | 0 \= Absolute (output when delta exceeded), 1 \= Differential (output the difference), 2 \= Binary (output 1/\-1) |
 | 1-4      | Magnitude  | 4 bytes | Minimum change required to trigger output                                                                        |
 
-### Time Delay (Type 0x0E)
+### Time (Type 0x08)
 
 Periodically passes the latest data sample, effectively downsampling by time.
 
@@ -1126,7 +2881,7 @@ Adds a timestamp or counter to each data sample.
 | 0 [4-5]  | Length   | 2 bits | Account data length                                           |
 | 1 [0-3]  | Prescale | 4 bits | Prescaler for the counter/timer                               |
 
-### Type 0x12 - Fuser
+### Fuser (Type 0x1B)
 
 Combines data from multiple sources. Waits until all inputs have new data, then outputs the combined result.
 
@@ -1236,21 +2991,28 @@ The **Settings Module** (0x11) has expanded over firmware versions. Not all regi
 | Start Advertisement     | `0x05`  | All          | Available on all firmware versions           |
 | Scan Response Packet    | `0x07`  | All          | Available on all firmware versions           |
 | Partial Scan Response   | `0x08`  | All          | Available on all firmware versions           |
-| Connection Parameters   | `0x09`  | Rev 1+       | MMRL and later                               |
-| Disconnect Event        | `0x0A`  | Rev 1+       | MMRL and later                               |
-| MAC Address             | `0x0B`  | Rev 1+       | MMRL and later                               |
-| Battery State           | `0x0C`  | Rev 1+       | MMRL and later; MMS has charger support      |
-| Power Status            | `0x11`  | Rev 5+       | MMS only \- USB cable detection              |
-| Charge Status           | `0x12`  | Rev 5+       | MMS only \- charging state                   |
-| Whitelist Filter Mode   | `0x13`  | Rev 5+       | MMS only                                     |
-| Whitelist Addresses     | `0x14`  | Rev 5+       | MMS only                                     |
-| 3V Power                | `0x1C`  | Rev 5+       | MMS only \- 3.3V regulator control           |
-| Force 1M PHY            | `0x1D`  | Rev 5+       | MMS only \- force Bluetooth 1M PHY           |
+| Connection Parameters   | `0x09`  | Rev 1+       |                                              |
+| Disconnect Event        | `0x0A`  | Rev 2+       |                                              |
+| MAC Address             | `0x0B`  | Rev 2+       |                                              |
+| Battery State           | `0x0C`  | Rev 3+       |                                              |
+| Power Status            | `0x11`  | Rev 5+       | Also requires Optional Feature Bitmask bit 0 |
+| Charge Status           | `0x12`  | Rev 5+       | Also requires Optional Feature Bitmask bit 1 |
+| Whitelist Filter Mode   | `0x13`  | Rev 6+       |                                              |
+| Whitelist Addresses     | `0x14`  | Rev 6+       |                                              |
+| 3V Power                | `0x1C`  | Rev 9+       | MMS only \- 3.3V regulator control           |
+| Force 1M PHY            | `0x1D`  | Rev 10+      | MMS only \- force Bluetooth 1M PHY           |
 
 Key firmware version thresholds:
 
-* **Revision 1** (MMRL): Added connection parameters, disconnect events, MAC address, and battery state
-* **Revision 5** (MMS): Added power/charge monitoring, whitelist management, 3V regulator control, and PHY selection
+* **Revision 1**: Added connection parameters
+* **Revision 2**: Added the disconnect event and MAC address
+* **Revision 3**: Added battery state
+* **Revision 5**: Added power/charge status (gated by the Optional Feature Bitmask in Module Info)
+* **Revision 6**: Added whitelist management and the advertisement type byte
+* **Revision 9**: Added 3V regulator control (MMS)
+* **Revision 10**: Added Bluetooth 1M PHY selection. Current MMRL and MMS boards both report revision 10.
+
+These thresholds match the constants in MetaWear-SDK-Cpp (`CONN_PARAMS_REVISION=1`, `DISCONNECTED_EVENT_REVISION=2`, `BATTERY_REVISION=3`, `CHARGE_STATUS_REVISION=5`, `WHITELIST_REVISION=6`, `MMS_REVISION=9`, `MMS_PHY_REVISION=10`).
 
 The multi-value comparator in the Data Processor Module also has a firmware dependency: the **Multi-Value Comparator** mode (with Zone and Binary output modes) requires firmware >= 1.2.3.
 
@@ -1300,3 +3062,70 @@ Each MetaSensor has a unique 6\-byte MAC address (e.g., `F1:4A:45:90:AC:9D`) tha
 3. **Physical Label**: The MAC is printed on a sticker on the back of the device.
 
 **Platform Note**: On Android and Windows, the MAC address is directly accessible from the BLE scan callback. On iOS, Apple obfuscates the MAC address in advertising packets and replaces it with an auto\-generated `CBUUID`. To retrieve the actual MAC on iOS, use the Settings Module register `0x0B` after establishing a connection, or read it from the custom advertising data in the MetaWear advertising packet.
+
+## Data Scales Summary
+
+| Data type | Scale constant | Notes |
+|---|---|---|
+| Accelerometer (all Bosch) | see FSR table | 16384, 8192, 4096, or 2048 LSB/g |
+| Gyroscope (all Bosch) | see FSR table | 16.4, 32.8, 65.6, 131.2, 262.4 LSB/dps |
+| Magnetometer BMM150 | 16.0 | LSB/uT |
+| Barometer pressure | 256.0 | raw int / 256.0 = Pa |
+| Barometer altitude | 256.0 | raw int / 256.0 = m |
+| Temperature | 8.0 | raw int / 8.0 = °C |
+| BME280 humidity | 1024.0 | raw / 1024.0 = % |
+| Q16.16 fixed point | 65536.0 (0x10000) | raw / 65536 = value |
+| Sensor fusion corrected acc | 1000.0 | raw float / 1000.0 = g |
+| Sensor fusion gravity / linear acc | 9.80665 | raw float (m/s²) / g_scale = g |
+| Battery voltage | direct uint16 | millivolts (raw bytes 1-2 of response) |
+| Battery charge | direct uint8 | percent |
+
+## Response Dispatch
+
+The SDK uses a two-key map `(module_id, register_id)` or three-key `(module_id, register_id, data_id)` to route incoming BLE notifications.
+
+```kotlin
+// Two-byte header (no ID): data starts at response[2]
+fun responseHandlerDataNoId(response: ByteArray) {
+    val header = ResponseHeader(response[0], response[1])
+    forwardResponse(header, response.copyOfRange(2, response.size))
+}
+
+// Three-byte header (with ID): data starts at response[3]
+fun responseHandlerDataWithId(response: ByteArray) {
+    val header = ResponseHeader(response[0], response[1], response[2])
+    forwardResponse(header, response.copyOfRange(3, response.size))
+}
+
+// Packed data (multiple samples per notification): response[2] onward in 6-byte chunks
+fun responseHandlerPackedData(response: ByteArray) {
+    val header = ResponseHeader(response[0], response[1])
+    var i = 2
+    while (i < response.size) {
+        dispatchSample(header, response, i, 6)
+        i += 6
+    }
+}
+```
+
+## Tear Down Sequence
+
+```
+[0x09, 0x08]   <- DataProcessor REMOVE_ALL
+[0x0A, 0x05]   <- Event REMOVE_ALL
+[0x0B, 0x0A]   <- Logging REMOVE_ALL
+```
+
+## GATT UUIDs (Canonical)
+
+| Characteristic | UUID |
+|---|---|
+| MetaWear Service | 326a9000-85cb-9195-d9dd-464cfbbae75a |
+| Command (write) | 326a9001-85cb-9195-d9dd-464cfbbae75a |
+| Notify (notify) | 326a9006-85cb-9195-d9dd-464cfbbae75a |
+| Device Info Svc | 0000180a-0000-1000-8000-00805f9b34fb |
+| Firmware Rev    | 00002a26-0000-1000-8000-00805f9b34fb |
+| Model Number    | 00002a24-0000-1000-8000-00805f9b34fb |
+| Hardware Rev    | 00002a27-0000-1000-8000-00805f9b34fb |
+| Manufacturer    | 00002a29-0000-1000-8000-00805f9b34fb |
+| Serial Number   | 00002a25-0000-1000-8000-00805f9b34fb |

@@ -2,7 +2,7 @@
 
 ![MetaMotionRL](assets/MetaMotionR-t.png){ align=center }
 
-MetaMotionRL is powered by a rechargeable lithium ion battery. It has a typical battery life of 1 to 14 days.
+MetaMotionRL is powered by a rechargeable lithium-polymer (LiPo) battery. It has a typical battery life of 1 to 14 days.
 
 Since it is USB powered, you can add a battery pack to get even more life out of your MetaMotionRL.
 
@@ -12,7 +12,7 @@ The MMRL optionally comes with a plastic case. Please note that the proximity of
 
 | Name | Battery              | Size              | Memory              |
 | :--- | :------------------- | :---------------- | :------------------ |
-| MMRL | 100mAh recharge lipo | 17mm x 25mm x 5mm | 8MB (~0.5M entries) |
+| MMRL | 100mAh recharge lipo | 17mm x 25mm x 5mm | 8MB (~1M entries) |
 
 ## Downloads
 
