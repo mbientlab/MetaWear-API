@@ -14,6 +14,23 @@ The MMRL optionally comes with a plastic case. Please note that the proximity of
 | :--- | :------------------- | :---------------- | :------------------ |
 | MMRL | 100mAh recharge lipo | 17mm x 25mm x 5mm | 8MB (~1M entries) |
 
+## Battery Life
+
+How long the MMRL runs depends on which sensors are active, the sample rate, and whether you're **logging** (recording to onboard memory while disconnected) or **streaming** live over Bluetooth. Streaming is far more power-hungry — the radio alone draws roughly 7.5 mA.
+
+For a logging session, two things run down and **whichever empties first ends the session**: the battery and the 8 MB onboard flash. On the MMRL the flash is small, so at high sample rates it — not the battery — is the limit. The table below shows both for common configurations at 100 Hz.
+
+| Configuration (100 Hz)                            | Battery life | Flash fills  | Lasts about     |
+| :------------------------------------------------ | :----------- | :----------- | :-------------- |
+| Accelerometer only — logging                      | ~23 days     | ~1.5 hours   | **~1.5 hours**  |
+| Full IMU (accel + gyro + mag) — logging           | ~2.6 days    | ~30 minutes  | **~30 minutes** |
+| Sensor fusion → Euler angles — logging            | ~1.7 days    | ~45 minutes  | **~45 minutes** |
+| Sensor fusion → Euler angles — streaming over BLE | ~10 hours    | n/a          | **~10 hours**   |
+
+On the MMRL the 8 MB flash, not the battery, is what caps high-rate logging — at 100 Hz it fills in minutes to an hour or two. To capture for longer, lower the sample rate (flash time scales inversely with rate), stream over Bluetooth (~10 hours, but the device must stay in range of a connected phone), or use the [MetaMotion S](metamotion-s.md) (512 MB) for multi-day high-rate captures.
+
+These are ballpark figures — real life shifts with temperature, battery age, Bluetooth settings, and exact rates. The per-sensor current draws and formulas behind them are in [Sensor Power Consumption](api-specification.md#sensor-power-consumption) and [Logging Memory Capacity](api-specification.md#logging-memory-capacity).
+
 ## Downloads
 
 | Document     | Link |

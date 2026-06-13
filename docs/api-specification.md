@@ -2727,29 +2727,9 @@ Approximate current draw per sensor when active (excluding BLE overhead):
 
 The **Sensor Fusion** figure is the extra draw of running the fusion algorithm on the MCU — it is **added on top of** the underlying sensors the fusion mode drives, not instead of them. Don't double-count: a fusion mode already implies its sensors are running (NDoF = accel + gyro + mag; IMUPlus = accel + gyro; Compass/M4G = accel + mag — see [0x19 - Sensor Fusion Module](#0x19-sensor-fusion-module)).
 
-### Battery Life
+**BLE streaming overhead**: ~7.5 mA while a connection is streaming. Logging with no connection adds **zero** — this is why logging lasts far longer than streaming. Flash writes during logging average well under 0.05 mA (brief bursts), negligible against the sensor draw.
 
-Two things drain on a logging session, and **whichever runs out first** ends it: the battery, and the on-board flash. Estimate both.
-
-**Battery.** Average current ≈ BLE overhead + sum of active sensor currents (+ fusion MCU overhead if a fusion mode is active). Battery life (hours) = battery capacity (mAh) ÷ average current (mA).
-
-* **BLE streaming overhead**: ~7.5 mA while a connection is streaming. Logging with no connection adds **zero** — this is why logging lasts far longer than streaming.
-* Flash writes during logging average well under 0.05 mA (writes are brief bursts), so they're negligible against the sensor draw.
-
-**Flash.** Time to fill (seconds) = log capacity (entries) ÷ (entries-per-sample × sample rate). See [Logging Memory Capacity](#logging-memory-capacity) for entries-per-sample and per-board capacity.
-
-#### Worked examples — MetaMotion S (100 mAh, 67.1M log entries)
-
-| Scenario (100 Hz)                                   | Avg current | Battery life | Flash fills | Practical limit |
-| :-------------------------------------------------- | :---------- | :----------- | :---------- | :-------------- |
-| Accelerometer only — **logging**                    | ~0.21 mA    | ~19 days     | ~3.9 days   | **~3.9 days** (flash) |
-| Full IMU (accel + gyro + mag) — **logging**         | ~1.2 mA     | ~3.4 days    | ~1.3 days   | **~1.3 days** (flash) |
-| NDoF fusion → Euler angles — **logging**            | ~2.1 mA     | ~47 hours    | ~47 hours   | **~2 days** (both at once) |
-| NDoF fusion → Euler angles — **streaming over BLE** | ~9.6 mA     | ~10 hours    | n/a         | **~10 hours** (battery) |
-
-The fusion-logging row is the common "wear it and capture orientation" configuration: full IMU feeding sensor fusion, Euler output to flash at 100 Hz, disconnected. On the MMS that's **roughly two days** between charges — and notably the battery and the 512 MB flash run out at nearly the same time, so neither is obviously the thing to upgrade first. Logging the *raw* IMU alongside Euler (rather than fusion output alone) fills flash about 2.5× faster (~18 hours) while battery life is unchanged.
-
-These are approximations: real life varies with temperature, battery age, BLE connection interval, and exact sensor settings. Treat them as ballpark, not spec.
+**Estimating runtime.** Battery life (hours) = battery capacity (mAh) ÷ (BLE overhead + sum of active sensor currents + fusion MCU overhead if active). A logging session also ends when the flash fills — time to fill (seconds) = log capacity ÷ (entries-per-sample × sample rate), see [Logging Memory Capacity](#logging-memory-capacity) — so whichever of battery or flash runs out first ends the session. For ready-made per-board estimates of common configurations, see the [MetaMotion S](metamotion-s.md#battery-life) and [MetaMotion RL](metamotion-rl.md#battery-life) battery-life tables.
 
 ## Data Processor Filter Configuration
 
