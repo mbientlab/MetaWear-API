@@ -127,7 +127,7 @@ The discovery process is:
 1. Subscribe to the **Notification Characteristic** (`326A9006`)
 2. For each known module opcode (`0x01` through `0x19`, and `0xFE`), send a read command: \[`opcode, 0x80`\] (reading register `0x00`)
 3. The MetaWear responds with: \[`opcode, 0x80, impl_id, revision, ...`\]
-4. If a module is not present on the board, the response will indicate an invalid or empty implementation
+4. **Every opcode responds.** A **present** module returns `[opcode, 0x80, impl_id, revision, ...]`; an **absent** module returns only the 2-byte header `[opcode, 0x80]` with no implementation or revision byte. Detect absence by the response carrying no implementation byte (length 2) — not by a missing reply, which would force a per-opcode timeout.
 
 The **Implementation ID** identifies which hardware variant is present (e.g., BMI160 vs BMI270 for the accelerometer), and the **Revision** indicates the firmware revision for that module. Together they determine which registers are available and how data should be interpreted.
 
@@ -173,7 +173,7 @@ Some firmware reports the bare `0.X` form without the leading `r`; treat both fo
 
 #### Example: MetaMotion RL Module Map
 
-The table below shows the **Implementation ID** and **Revision** reported by each module on a **MetaMotion RL (MMRL)** board. Modules marked *Not present* do not respond to the Module Info read on this board.
+The table below shows the **Implementation ID** and **Revision** reported by each module on a **MetaMotion RL (MMRL)** board. Modules marked *Not present* still **respond** to the Module Info read, but with only the 2-byte header `[opcode, 0x80]` (no implementation/revision) — that empty response is how the host detects absence.
 
 | Module             | Opcode | Implementation | Revision    |
 | :----------------- | :----- | :------------- | :---------- |
@@ -201,7 +201,7 @@ The table below shows the **Implementation ID** and **Revision** reported by eac
 
 #### Example: MetaMotion S Module Map
 
-The table below shows the **Implementation ID** and **Revision** reported by each module on a **MetaMotion S (MMS)** board. Modules marked *Not present* do not respond to the Module Info read on this board.
+The table below shows the **Implementation ID** and **Revision** reported by each module on a **MetaMotion S (MMS)** board. Modules marked *Not present* still **respond** to the Module Info read, but with only the 2-byte header `[opcode, 0x80]` (no implementation/revision) — that empty response is how the host detects absence.
 
 | Module             | Opcode | Implementation | Revision    |
 | :----------------- | :----- | :------------- | :---------- |
@@ -253,9 +253,9 @@ The **Address** and **Value** depend on which **Module** is specifically address
 
 If the command involves reading data once, the **Setting Address** should be bitwise OR’d with `0x80`.
 
-| Byte 0        | Byte 1 (bits 0-7) | Byte 1 (bit 8)                                    | Bytes 2 \- 19 |
-| :------------ | :---------------- | :------------------------------------------------ | :------------ |
-| Module Opcode | Setting Address   | 1 means a one time read0 means a write or notify | Value         |
+| Byte 0        | Byte 1 (bits 0-5) | Byte 1 (bit 6)             | Byte 1 (bit 7)                              | Bytes 2 \- 19 |
+| :------------ | :---------------- | :------------------------- | :------------------------------------------ | :------------ |
+| Module Opcode | Setting Address   | Data-ID / silent-read flag | `1` = one-time read; `0` = write or notify  | Value         |
 
 For example, when sending the following command bytes to the MetaWear **Command Characteristic** \[`0x03, 0x0f, 0x01, 0x00`\]:
 
@@ -269,7 +269,7 @@ For example, when sending the following command bytes to the MetaWear **Command 
 
 * `0x04` is the **Module** **Opcode** for the temperature sensor  
 * `0x01` is the **Address** for the temperature sensor data (`0x81` means we want to read it)  
-* `0x00` is the 1 byte **Value** that a user must send to represent which temperature sensor we want to read from (internal, thermistor, external), `0x00` represents the internal sensor
+* `0x00` is the 1 byte **Value**: the **channel index** to read — a 0-based position into the board's channel list. Channel `0x00` is the first channel, which on current boards is the nRF on-die ("internal") sensor. See the [Multichannel Temperature Module](#0x04-multichannel-temperature-module) for how channels map to sensor types.
 
 The MetaWear will see the read temperature command and send back the temperature value. 
 
@@ -283,13 +283,14 @@ Let’s revisit the data packet sent to the **Command Characteristic** in the la
 
 * `0x04` is the **Module** **Opcode** for the temperature sensor  
 * `0x81` is the **Address** for the temperature sensor data register `0x01` OR’d with `0x80` because we want to read it  
-* `0x00` is the **Value** that represents the 1 byte index where a value of `1` represents the on-die temperature sensor, `2` means the on-board thermistor, and `3` is a external temperature sensor that can be added to the GPIO pins
+* `0x00` is the **channel index** — a 0-based position into the board's channel list (channel `0` is the first available channel). The *driver type* behind each channel (nRF on-die, external thermistor, BMP280, on-board thermistor) is a separate enum reported by **Module Info**; see the [Multichannel Temperature Module](#0x04-multichannel-temperature-module).
 
-The temperature data received from the read above is \[`0x04, 0x81, 0x00, 0x00, 0x01`\]:
+The temperature data received from the read above is \[`0x04, 0x81, 0x00, 0xC8, 0x00`\]:
 
 * `0x04` is the **Module** **Opcode** for the temperature sensor  
 * `0x81` is the **Address** for the temperature sensor data with a read  
-* `0x00 0x00 0x01` is the 3 byte **Value** where the first byte is the index described above and the next 2 bytes int16\_t in units of 0.25 C
+* `0x00` is the channel index that was read  
+* `0xC8 0x00` is the 2-byte temperature value: int16\_t little-endian in units of **0.125°C** (`0x00C8` = 200 → 200 × 0.125 = 25.0°C)
 
 For example, you may receive the following data: \[`0x03, 0x11, 0x07`\] where:
 
@@ -343,10 +344,17 @@ Every command and every notification follows the same two- or three-byte header:
 
 ```
 Byte 0: module_id
-Byte 1: register_id  (bit 7 = 0x80 set means "READ" request/response)
+Byte 1: register_id  (bits 0-5 = register address; bit 6 = 0x40 data-id/silent
+                      flag; bit 7 = 0x80 READ request/response)
 Byte 2: data_id      (only present for signals that have an ID, e.g. timer, logger entries)
 Bytes 3+: payload
 ```
+
+The register byte's **two high bits are flags**, which is why `CLEAR_READ` masks
+with `0x3f` to recover the bare 6-bit address:
+
+* **Bit 7 (`0x80`)** — read request/response. OR it into the address for a one-time read.
+* **Bit 6 (`0x40`)** — set *together with* bit 7 on reads that carry a data-id byte in the response and/or route the read **silently** to on-board consumers instead of the host: I2C/SPI reads (`0xC1` / `0xC2`) and the silent sensor reads that feed loggers and data processors (see [Read-signal routing](#read-signal-routing-hardware-observed-firmware-172)).
 
 Macros are the only commands written **with** response; everything else uses
 write-without-response.
@@ -413,9 +421,9 @@ For example, to Flash the LED, the command is \[`0x02, 0x03, 0x00, 0x02, 0x1f, 0
 * `0x1f` is the **Byte 2** of the **Value** is the intensity when the led is on  
 * `0x00` is the **Byte 3** of the **Value** is the intensity when the led is off (we want it all the way off)  
 * `0x00 0x00` is the **Byte 4-5** of the **Value** is the time to turn on in ms (0ms)  
-* `0x32 0x00` is the **Byte 6-7** of the **Value** is the time to stay on in ms (12800ms)  
+* `0x32 0x00` is the **Byte 6-7** of the **Value** is the time to stay on in ms (`0x0032` little-endian = 50 ms)  
 * `0x00 0x00` is the **Byte 8-9** of the **Value** is the time to turn off in ms (0ms)  
-* `0xf4 0x01` is the **Byte 10-11** of the **Value** is the time period (62465 ms)  
+* `0xf4 0x01` is the **Byte 10-11** of the **Value** is the time period (`0x01F4` little-endian = 500 ms)  
 * `0x00 0x00` is the **Byte 12-13** of the **Value** is how long to delay the pattern (0 ms)  
 * `0x0a` is the **Byte 14** of the **Value** is how many times the pattern should be repeated (10 times)
 
@@ -1046,12 +1054,17 @@ the sample in the lower 5 bits.
 | Signal | Module | Reg | ID | Channels | Ch size | src_config |
 |--------|--------|-----|----|----------|---------|------------|
 | Switch | 0x01 | 0x01 | 0xFF | 1 | 1B | 0x00 |
-| GPIO ADC | 0x05 | 0x07 | pin | 1 | 2B | 0x20 |
-| GPIO absolute | 0x05 | 0x06 | pin | 1 | 2B | 0x20 |
+| GPIO ADC | 0x05 | 0x87 | pin | 1 | 2B | 0x20 |
+| GPIO absolute | 0x05 | 0x86 | pin | 1 | 2B | 0x20 |
 | Accelerometer | 0x03 | 0x04 | 0xFF | 3 | 2B | 0xA0 |
 | Gyroscope | 0x13 | 0x05 | 0xFF | 3 | 2B | 0xA0 |
-| Temperature | 0x04 | 0xC1 | ch | 1 | 2B | 0x20 |
+| Temperature | 0x04 | 0x81 | ch | 1 | 2B | 0x20 |
 | Processor output | 0x09 | 0x03 | proc_id | varies | varies | computed |
+
+**Streaming vs read-based sources** — note the `Reg` column mixes plain and read-bit registers, on purpose:
+
+* **Streaming** signals (switch, accelerometer, gyroscope, magnetometer) use their plain data register and feed processors whenever the sensor is running.
+* **Read-based** signals (temperature, GPIO analog) must use the **loud-read** register — the data register OR'd with `0x80`: temperature `0x81` (not `0x01`/`0xC1`), GPIO ADC `0x87` (not `0x07`), GPIO absolute `0x86` (not `0x06`). The host then drives the chain by issuing *loud* reads. Registering the source with the silent form (`0xC1`/`0xC7`, as the C++ SDK encodes it) fed the processor **nothing** on firmware 1.7.2 — that silent form routes to *logger triggers*, not processors. See [Read-signal routing](#read-signal-routing-hardware-observed-firmware-172) below.
 
 #### Processor streaming
 
@@ -1407,8 +1420,11 @@ Note: entries occupy 8 bytes in flash storage, but the BLE readout format is 9 b
 
 **Create a logger for a signal:**
 ```
-[0x0B, 0x02, module_id, register_id, data_id, (offset<<5 | length-1)]
+[0x0B, 0x02, module_id, register_id, data_id, packed]
+  where packed = ((length-1) << 5) | offset   (bits 0-4 = offset, bits 5-7 = length-1)
 ```
+A log entry holds at most 4 bytes, so a signal wider than 4 bytes needs one
+logger per ≤4-byte chunk (e.g. a 6-byte accelerometer sample → two loggers).
 Response: `[0x0B, 0x02, assigned_entry_id]`
 
 **Start logging (with optional overwrite):**
@@ -1604,42 +1620,43 @@ Read 10 bytes from device 0x1C, register 0x0D, id=1:
 
 #### SPI Write
 ```
-[0x0D, 0x02, slave_select, clock, mode, data_len, msb_first, nrf_pins, id, data...]
+[0x0D, 0x02, slave_select, clock_pin, mosi_pin, miso_pin, config, data...]
 ```
+The four pin bytes select the bus GPIO pins. `config` is a **single packed byte** (matching the SPI Read/Write register table above), not separate fields:
+
+| Bits | Field       | Values                                                                                  |
+| :--- | :---------- | :-------------------------------------------------------------------------------------- |
+| 0    | Bit order   | `0` = MSB-first (typical), `1` = LSB-first                                               |
+| 1-2  | Mode        | `0`–`3` (CPOL/CPHA — see below)                                                          |
+| 3-5  | Frequency   | `0`–`6` (125 kHz … 8 MHz — see below)                                                    |
+| 6    | Native pins | `1` = use the nRF internal SPI pins (the four pin bytes are then ignored), `0` = board GPIO pins |
+| 7    | reserved    | `0`                                                                                      |
 
 #### SPI Read
 Send:
 ```
-[0x0D, 0xC2, slave_select, clock, mode, read_len, msb_first, nrf_pins, id]
+[0x0D, 0xC2, slave_select, clock_pin, mosi_pin, miso_pin, config, len_id, write_data...]
 ```
-`0xC2 = 0x02 | 0x80 | 0x40` — same read+data_id bit pattern as I2C.
+`0xC2 = 0x02 | 0x80 | 0x40` — same read+data_id bit pattern as I2C. `config` is the same packed byte as the write. `len_id` packs the read request: **bits 0-3 = (bytes to read − 1)** (`0` = 1 byte … `15` = 16 bytes), **bits 4-7 = id** (echoed in the response). Any `write_data` bytes are clocked out before the read.
 
-Board responds:
+Board responds with a plain notification (bit 7 NOT set):
 ```
 [0x0D, 0x02, id, byte0, byte1, ...]
 ```
 
-**SPI clock enum values:**
+**Frequency field (config bits 3-5):**
 ```
-0 = 125 kHz
-1 = 250 kHz
-2 = 500 kHz
-3 = 1 MHz
-4 = 2 MHz
-5 = 4 MHz
-6 = 8 MHz
+0 = 125 kHz   1 = 250 kHz   2 = 500 kHz   3 = 1 MHz
+4 = 2 MHz     5 = 4 MHz     6 = 8 MHz
 ```
 
-**SPI mode (CPOL/CPHA):**
+**Mode field (config bits 1-2, CPOL/CPHA):**
 ```
 0 = mode 0 (CPOL=0, CPHA=0)
 1 = mode 1 (CPOL=0, CPHA=1)
 2 = mode 2 (CPOL=1, CPHA=0)
 3 = mode 3 (CPOL=1, CPHA=1)
 ```
-
-**`msb_first`:** `1` = MSB transmitted first (typical), `0` = LSB first.
-**`nrf_pins`:** `1` = use nRF internal SPI pins, `0` = use board expansion header pins.
 
 ## 0x0F \- Macro Module
 
@@ -2299,7 +2316,9 @@ Each fusion mode uses a different combination of sensors and produces data at di
 
 **M4G** (Magnet for Gyroscope) is similar to IMU Plus but detects rotation via magnetometer instead of gyroscope. This results in lower power consumption and no gyroscope drift, but accuracy depends on the surrounding magnetic field. No magnetometer calibration is required in this mode.
 
-When using the sensor fusion module, the underlying accelerometer, gyroscope, and magnetometer are automatically configured by the fusion algorithm. Do not configure these sensors separately via their individual module registers while sensor fusion is active.
+The fusion algorithm runs on top of the on-board accelerometer, gyroscope, and magnetometer, but the firmware does **not** configure or start them on its own. The host must configure each underlying sensor to the rate its fusion mode requires **and** start it, in addition to writing the fusion config and starting the fusion module — see [Underlying-sensor requirements per mode](#underlying-sensor-requirements-per-mode) and the full wire sequences below. Writing only the fusion config and start, with the sensors left off, leaves the algorithm with no input and it emits nothing.
+
+High-level SDKs perform this bookkeeping for you, which is why fusion can appear "automatic" — but at the protocol level the accelerometer/gyroscope/magnetometer config and start commands are required. The fusion mode fixes the sensor ODRs and the magnetometer preset (you choose only the accelerometer and gyroscope ranges), so configure the underlying sensors to **match** what the mode expects rather than to arbitrary values. Because fusion owns these three sensors while it runs, don't reconfigure or independently repurpose them mid-session.
 
 ### Calibration
 
@@ -3007,21 +3026,23 @@ Send: \[`0x0C, 0x02, 0x88, 0x13, 0x00, 0x00, 0xFF, 0xFF, 0x00`\]
 
 The MetaWear responds with the Timer ID (e.g., `0x00`).
 
-**Step 2**: Begin recording an event for this timer.
+**Step 2**: Record the event entry. A single `Event Entry` (`0x02`) write carries the whole binding: the **source** triple (module, register, index), the **target** command's module and register, and the **length** of the target command's parameter bytes (which follow in Step 3). See the [Event Module](#0x0a-event-module) register table for the field layout.
 
-Send: \[`0x0A, 0x02, 0x0C, 0x06, 0x00`\]
+Send: \[`0x0A, 0x02, 0x0C, 0x06, 0x00, 0x04, 0x81, 0x01`\]
 
-* `0x0A` \- Event module
-* `0x02` \- Entry register
+* `0x0A 0x02` \- Event module, Entry register
 * `0x0C 0x06 0x00` \- Source: Timer Module (0x0C), Notify register (0x06), Timer ID 0
+* `0x04 0x81` \- Target: Temperature Module (0x04), data register (`0x01` OR'd with `0x80` to read)
+* `0x01` \- Target command parameter length: 1 byte (the channel index supplied in Step 3)
 
-**Step 3**: Record the command to execute (read temperature).
+The MetaWear responds with the assigned Event Unique ID.
 
-Send: \[`0x0A, 0x03, 0x04, 0x81, 0x00`\]
+**Step 3**: Supply the target command's **parameter bytes only** — the target module and register are already in the entry, so this write contains just what would follow them on the wire. For the temperature read that is the single channel-index byte.
 
-* `0x0A` \- Event module
-* `0x03` \- Cmd Parameters register
-* `0x04 0x81 0x00` \- The command: read temperature sensor index 0
+Send: \[`0x0A, 0x03, 0x00`\]
+
+* `0x0A 0x03` \- Event module, Command Parameters register
+* `0x00` \- Channel index 0 (the on-die temperature sensor)
 
 **Step 4**: Start the timer.
 
@@ -3035,20 +3056,36 @@ Now the MetaWear will automatically read and send back the temperature every 5 s
 
 The logging readout uses a page-based protocol to reliably transfer large amounts of data over BLE.
 
-**Step 1**: Enable logging and add a trigger for accelerometer data.
+**Step 1**: Add the logger trigger(s) for accelerometer data, then enable logging.
 
-Send: \[`0x0B, 0x02, 0x03, 0x04, 0x00, 0x06`\]
+A single log entry holds at most **4 bytes**, but an accelerometer sample is 6 bytes (X, Y, Z as int16), so it needs **two triggers** — one per chunk. Each `Add Trigger` (`0x02`) write is `[0x0B, 0x02, source_module, source_register, source_index, packed]`, where the final byte packs the chunk position: **bits 0-4 = offset**, **bits 5-7 = length − 1**, i.e. `packed = ((length − 1) << 5) | offset`.
 
-* `0x0B` \- Logging module
-* `0x02` \- Add Trigger register
+Chunk 1 — bytes 0-3 (offset 0, length 4 → `packed = (3 << 5) | 0 = 0x60`):
+
+Send: \[`0x0B, 0x02, 0x03, 0x04, 0xFF, 0x60`\]
+
+Chunk 2 — bytes 4-5 (offset 4, length 2 → `packed = (1 << 5) | 4 = 0x24`):
+
+Send: \[`0x0B, 0x02, 0x03, 0x04, 0xFF, 0x24`\]
+
+* `0x0B 0x02` \- Logging module, Add Trigger register
 * `0x03 0x04` \- Source: Accelerometer (0x03), Data Interrupt (0x04)
-* `0x00 0x06` \- Data offset 0, length 6 bytes
+* `0xFF` \- Source index (the accelerometer data signal has no sub-index)
+* `0x60` / `0x24` \- Packed offset + (length − 1) for each chunk
 
-Send: \[`0x0B, 0x01, 0x01`\] to enable logging.
+Each write returns a notification carrying the assigned Trigger Unique ID. Then enable logging:
 
-**Step 2**: After some time, initiate readout.
+Send: \[`0x0B, 0x01, 0x01`\]
 
-Send: \[`0x0B, 0x06, 0xFF, 0xFF, 0xFF, 0xFF`\] to read all entries.
+**Step 2**: After some time, request the readout. The `Readout` register (`0x06`) takes **8 value bytes** — a 4-byte entry count followed by a 4-byte notify delta — not a 4-byte "read all" sentinel. Read the current entry count first, then request exactly that many.
+
+Read the count: Send \[`0x0B, 0x85`\] (LENGTH register `0x05` with the read bit). The response \[`0x0B, 0x85, n0, n1, n2, n3`\] carries the count as a little-endian uint32.
+
+Request all entries: Send \[`0x0B, 0x06, n0, n1, n2, n3, 0x00, 0x00, 0x00, 0x00`\]
+
+* `0x0B 0x06` \- Logging module, Readout register
+* `n0 n1 n2 n3` \- Number of entries to read (the count from LENGTH, uint32 little-endian)
+* `0x00 0x00 0x00 0x00` \- Notify delta: `0` = one progress update per page
 
 **Step 3**: Process the page-based readout.
 
@@ -3064,19 +3101,25 @@ This continues until all entries have been transferred and the progress reaches 
 
 This example uses the **Event Module** to flash the LED when the button is pressed.
 
-**Step 1**: Record an event triggered by the switch.
+**Step 1**: Record the event entry — bind the switch (source) to the LED Play command (target). As in the temperature example, the entry holds the source triple, the target module + register, and the target command's parameter length.
 
-Send: \[`0x0A, 0x02, 0x01, 0x01, 0x00`\]
+Send: \[`0x0A, 0x02, 0x01, 0x01, 0xFF, 0x02, 0x01, 0x01`\]
 
-* Source: Switch Module (0x01), Switch State register (0x01)
+* `0x0A 0x02` \- Event module, Entry register
+* `0x01 0x01 0xFF` \- Source: Switch Module (0x01), Switch State register (0x01), index `0xFF` (the switch has no sub-index)
+* `0x02 0x01` \- Target: LED Module (0x02), Play register (0x01)
+* `0x01` \- Target command parameter length: 1 byte (the play value supplied in Step 2)
 
-**Step 2**: Record the LED play command.
+The MetaWear responds with the assigned Event Unique ID.
 
-Send: \[`0x0A, 0x03, 0x02, 0x01, 0x01`\]
+**Step 2**: Supply the target command's parameter bytes — for LED Play, the single value byte.
 
-* Command: LED Module (0x02), Play register (0x01), Value 0x01 (play)
+Send: \[`0x0A, 0x03, 0x01`\]
 
-Now pressing the button will automatically play the LED pattern.
+* `0x0A 0x03` \- Event module, Command Parameters register
+* `0x01` \- Play value (`0x01` = play)
+
+Now pressing the button plays the LED. Configure a pattern first with the LED **Mode** register (see [0x02 - LED Module](#0x02-led-module)) — an event action is a single command, so Play only has a visible effect once a pattern is loaded.
 
 ## Settings Module Firmware Revisions
 
