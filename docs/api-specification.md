@@ -125,7 +125,7 @@ When a host connects to a MetaWear for the first time, it should discover which 
 The discovery process is:
 
 1. Subscribe to the **Notification Characteristic** (`326A9006`)
-2. For each known module opcode (`0x01` through `0x19`, and `0xFE`), send a read command: \[`opcode, 0x80`\] (reading register `0x00`)
+2. For each opcode in the **SDK discovery set** — the `MODULE_DISCOVERY_CMDS` list under *Module discovery order* below — send a read command: \[`opcode, 0x80`\] (reading register `0x00`). Probe only this set, not every numeric value in the `0x01`–`0x19` range. The set is *not* simply "all active modules": it still includes the **deprecated** iBeacon (`0x07`) and Humidity (`0x16`) opcodes, which the SDK legacy-probes for backward compatibility, while the other deprecated opcodes — NeoPixel (`0x06`), ANCS (`0x0E`), GSR (`0x10`), Color (`0x17`), Proximity (`0x18`) — are omitted entirely.
 3. The MetaWear responds with: \[`opcode, 0x80, impl_id, revision, ...`\]
 4. **Every opcode responds.** A **present** module returns `[opcode, 0x80, impl_id, revision, ...]`; an **absent** module returns only the 2-byte header `[opcode, 0x80]` with no implementation or revision byte. Detect absence by the response carrying no implementation byte (length 2) — not by a missing reply, which would force a per-opcode timeout.
 
@@ -140,7 +140,7 @@ The **Implementation ID** identifies which hardware variant is present (e.g., BM
    ```
    [module_id, 0x80]   <- READ_REGISTER(0x00) = info register
    ```
-   The board responds with `[module_id, 0x80, implementation_byte, revision_byte, ...]`.
+   A **present** module responds with `[module_id, 0x80, implementation_byte, revision_byte, ...]`; an **absent** module responds with just `[module_id, 0x80]` (no implementation/revision byte — see step 4 of *Module Discovery* above).
 4. After all modules respond, call `init_*_module()` for each present module.
 5. Read logging time signal (module 0x0B, register 0x84) and set reference epoch.
 
@@ -151,6 +151,7 @@ DATA_PROCESSOR, EVENT, LOGGING, TIMER, I2C, MACRO, SETTINGS,
 BAROMETER, GYRO, AMBIENT_LIGHT, MAGNETOMETER, HUMIDITY,
 SENSOR_FUSION, DEBUG
 ```
+`IBEACON` (`0x07`) and `HUMIDITY` (`0x16`) appear in this set even though the [Modules](#modules) table marks them **Deprecated** — the SDK still probes them for backward compatibility, and a board that doesn't implement one simply returns the empty 2-byte Module Info.
 
 Model numbers (from `module_number` string in Device Info "model number" characteristic):
 ```
@@ -277,7 +278,7 @@ To understand the **Addresses** and **Values**, users must refer to the tables i
 
 | Setting Address                         | Mode                                                                                              | Wlen                                   | Rlen                                                 | Value                                                |
 | :-------------------------------------- | :------------------------------------------------------------------------------------------------ | :------------------------------------- | :--------------------------------------------------- | :--------------------------------------------------- |
-| The 2 byte **Address** for the register | The modes supported:<br>R = Readable register<br>W = Writable register<br>N = Notifiable register | Length of **Value** bytes when writing | Length of **Value** bytes when reading and notifying | Byte or bit level detail of what the **Value** means |
+| The 1 byte **Address** for the register (Byte 1 of the command) | The modes supported:<br>R = Readable register<br>W = Writable register<br>N = Notifiable register | Length of **Value** bytes when writing | Length of **Value** bytes when reading and notifying | Byte or bit level detail of what the **Value** means |
 
 Let’s revisit the data packet sent to the **Command Characteristic** in the last example `[0x04, 0x81, 0x00`\]:
 
@@ -354,7 +355,7 @@ The register byte's **two high bits are flags**, which is why `CLEAR_READ` masks
 with `0x3f` to recover the bare 6-bit address:
 
 * **Bit 7 (`0x80`)** — read request/response. OR it into the address for a one-time read.
-* **Bit 6 (`0x40`)** — set *together with* bit 7 on reads that carry a data-id byte in the response and/or route the read **silently** to on-board consumers instead of the host: I2C/SPI reads (`0xC1` / `0xC2`) and the silent sensor reads that feed loggers and data processors (see [Read-signal routing](#read-signal-routing-hardware-observed-firmware-172)).
+* **Bit 6 (`0x40`)** — set *together with* bit 7 on reads that carry a data-id byte in the response and/or route the read **silently** to on-board consumers instead of the host: I2C/SPI reads (`0xC1` / `0xC2`) and the silent sensor reads that feed **logger triggers** (see [Read-signal routing](#read-signal-routing-hardware-observed-firmware-172)). Note that *data processors* are fed by **loud** reads, not silent ones — only loggers consume the silent form.
 
 Macros are the only commands written **with** response; everything else uses
 write-without-response.
@@ -804,7 +805,7 @@ Each channel is addressed by its **channel index** (its position in the Module I
 | Setting     | Address | Mode | Wlen | Rlen | Value                                                                                                                                          |
 | :---------- | :------ | :--- | :--- | :--- | :--------------------------------------------------------------------------------------------------------------------------------------------- |
 | Module Info | `0x00`  | R    |      | 2+   | Byte 0: Module Implementation ID: 1 (uint8\_t) Byte 1: Module Revision: 0 (uint8\_t) Byte 2+: Array of Driver (source) IDs, one per channel    |
-| Temperature | `0x01`  | RN   | 0    | 3    | Byte 0: Channel Index (uint8\_t) Byte 1-2: int16\_t in units of 0.125°C. Data format may be backend-driver specific.                           |
+| Temperature | `0x01`  | RN   | 0    | 3    | Byte 0: Channel Index (uint8\_t) Byte 1-2: int16\_t in units of 0.125°C (raw ÷ 8). All channels use this same wire format and scale regardless of the underlying driver; only the physical resolution differs (e.g. the nRF on-die sensor resolves ~0.25°C but is still reported in 0.125°C units). |
 | Mode        | `0x02`  | RW   | 1+   | 1+   | Byte 0: Driver (channel) Index (uint8\_t) Byte 1+: Mode settings, driver specific                                                              |
 
 For example, to read the temperature from channel 0, the command is \[`0x04, 0x81, 0x00`\]:
@@ -1028,7 +1029,7 @@ each ADD response assigns an ID that can be used as the source for subsequent pr
 | 0 | module | 0x09 |
 | 1 | register | 0x02 (ADD) |
 | 2 | src_module | Source module ID |
-| 3 | src_reg | Source register ID (not OR'd with 0x80) |
+| 3 | src_reg | Source register ID. **Streaming** signals use the plain register (no read bit); **read-based** signals (temperature, GPIO analog) use the **loud-read** form, register OR'd with `0x80` (e.g. temperature `0x81`, GPIO ADC `0x87`, GPIO absolute `0x86`). See *Streaming vs read-based sources* below. |
 | 4 | src_data_id | Source data ID, or 0xFF for "any" |
 | 5 | src_config | Encodes sample length and offset (see below) |
 | 6 | proc_type | Processor type ID |
@@ -1708,10 +1709,10 @@ For commands <= 13 bytes (MW_CMD_MAX_LENGTH - 2):
 [0x0F, 0x03, ...command_bytes...]
 ```
 
-For commands >= 14 bytes:
+For commands >= 14 bytes, split into the first 2 bytes and everything after:
 ```
-[0x0F, 0x09, cmd_byte0, cmd_byte1]       <- ADD_PARTIAL (first 2 bytes)
-[0x0F, 0x03, cmd_byte2..cmd_byteN-2]     <- ADD_COMMAND (remaining)
+[0x0F, 0x09, cmd_byte0, cmd_byte1]                 <- ADD_PARTIAL (first 2 bytes)
+[0x0F, 0x03, cmd_byte2, cmd_byte3, ... last byte]  <- ADD_COMMAND (all remaining bytes)
 ```
 
 **End macro:**
