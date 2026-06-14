@@ -1,6 +1,6 @@
 # MetaMotionRL (MMRL)
 
-![MetaMotionRL](assets/MetaMotionR-t.png){ align=center }
+![MetaMotionRL](assets/MMRL.png){ align=center }
 
 MetaMotionRL is powered by a rechargeable lithium-polymer (LiPo) battery. It has a typical battery life of 1 to 14 days.
 
