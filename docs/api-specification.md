@@ -3200,11 +3200,33 @@ Refer to the [BMI160 datasheet](https://www.bosch-sensortec.com/products/motion-
 
 Each MetaSensor has a unique 6\-byte MAC address (e.g., `F1:4A:45:90:AC:9D`) that serves as its identifier. The MAC address is available in three ways:
 
-1. **BLE Advertising Packet**: The MAC is included in the device's advertising data and can be read during scanning before establishing a connection.
-2. **Settings Module Register**: On MMRL and later boards (Settings Module revision 1+), the MAC address can be read via register `0x0B` of the Settings Module (`0x11`).
-3. **Physical Label**: The MAC is printed on a sticker on the back of the device.
+1. **Settings Module Register**: On MMRL and later boards (Settings Module revision 1+), the MAC address can be read via register `0x0B` of the Settings Module (`0x11`) after establishing a connection.
+2. **Physical Label**: The MAC is printed on a sticker on the back of the device.
+3. **Host\-configured MAC broadcast** (optional): a host application can program the scan response so the board advertises its own MAC — see below.
 
-**Platform Note**: On Android and Windows, the MAC address is directly accessible from the BLE scan callback. On iOS, Apple obfuscates the MAC address in advertising packets and replaces it with an auto\-generated `CBUUID`. To retrieve the actual MAC on iOS, use the Settings Module register `0x0B` after establishing a connection, or read it from the custom advertising data in the MetaWear advertising packet.
+**Stock firmware does not broadcast the MAC.** Verified over the air on firmware 1.7.x: default advertisements carry only the local name and the MetaWear service UUID. On Android and Windows the MAC appears in scan callbacks because the *operating system* exposes the link\-layer address itself, not because the advertisement payload contains it. On iOS, Apple hides the link\-layer address and substitutes an auto\-generated `CBUUID` that differs per host — so out of the box, an iOS app cannot learn a board's MAC without connecting.
+
+### MAC Broadcast Scan Response
+
+Because CoreBluetooth identifiers are host\-specific, the MAC is the only board identity that survives across a user's devices. The sanctioned way to make it visible during scanning is to program a custom scan response containing a Complete Local Name AD structure (keeps the board discoverable by name) followed by a Manufacturer Specific Data AD structure under MbientLab's Bluetooth SIG company identifier `0x626D` ("mb", transmitted little\-endian on air) carrying the 6 MAC bytes LSB\-first — the same byte order as every other MAC transport in this protocol.
+
+Payload for name `MetaWear`, MAC `ED:AA:A4:CE:A6:A4` (20 of the 31 available bytes):
+
+```
+09 09 4D 65 74 61 57 65 61 72   len=9  type=0x09 Complete Local Name  "MetaWear"
+09 FF 6D 62 A4 A6 CE A4 AA ED   len=9  type=0xFF Manufacturer Data    0x626D + MAC LSB-first
+```
+
+Program it with the Settings Module scan\-response registers (payloads over 13 bytes split across `PARTIAL_SCAN_RESPONSE` `0x08` — first 13 bytes — then `SCAN_RESPONSE` `0x07` with the remainder):
+
+```
+[0x11, 0x08, 09 09 4D 65 74 61 57 65 61 72 09 FF 6D]   <- first 13 bytes
+[0x11, 0x07, 62 A4 A6 CE A4 AA ED]                     <- remainder
+```
+
+Persistence: the scan response does not survive a reset on its own — record the two writes as an execute\-on\-boot macro (Macro Module `0x0F`). Note that macro recording stores commands without executing them, so apply the writes live as well for immediate effect. To update the broadcast (e.g. after a rename), erase all macros and re\-record — the Macro Module has no per\-macro erase. A firmware update erases stored macros, so hosts should re\-establish the broadcast after flashing.
+
+Reference implementation: `MetaWear-API-Swift` — `Sources/MetaWear/Models/MWMACAdvertisement.swift` (payload assembly, parsing, and the persistent\-configuration flow).
 
 ## Data Scales Summary
 
