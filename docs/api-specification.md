@@ -1487,6 +1487,64 @@ Wall-clock time of an entry: `logReferenceDate + tick * TICK_TIME_STEP`.
 
 To convert to a signal value, reassemble 4-byte chunks from consecutive entry IDs.
 
+#### MMS NAND Logging Semantics (Field-Verified)
+
+The MMS (logging revision 3) stores entries in NAND flash behind a RAM write
+page and a background garbage collector. These mechanics are invisible to
+human-paced hosts — a person navigating between Stop and Download provides
+seconds of settling time by accident — but a machine-paced host (scripted or
+multi-device orchestration) will hit every one of them. Verified on MMS
+firmware 1.7.x against byte-identical command sequences that succeed or fail
+purely on timing and prior flash state:
+
+**`LENGTH` (0x05) has three distinct moods:**
+
+1. **While logging is ENABLED**: counts flash-committed entries **plus** the
+   in-RAM write page. This is the only state in which the count reflects
+   everything captured so far.
+2. **After logging STOPS**: counts flash-committed entries **only**. The
+   stop-triggered commit of the final RAM page takes **seconds** with no
+   completion signal — a `LENGTH` read immediately after `[0x0B, 0x01, 0x00]`
+   under-reports (often reads `0` for a short session that lived entirely in
+   RAM). `PAGE_FLUSH` (`0x10`) requests the commit but has **no
+   acknowledgement** and does not make an immediate read trustworthy.
+3. **After a clear**: may report a stale sentinel (frequently `1`, sometimes a
+   page-aligned stale count) for up to ~60 s while garbage collection
+   settles. A stable reading of `0` does **not** mean the flash is idle —
+   an empty-but-dirty log (all entries previously nulled by readout page
+   confirms) reads `0` instantly while GC still has work queued.
+
+**Drop Entries (0x09) is asynchronous and triggers garbage collection.**
+The command acknowledges at the ATT layer immediately; the actual erase +
+GC runs in the background for seconds (dirty flash: tens of seconds). The
+spec's `READOUT_PAGE_COMPLETED` (0x0D) notification is documented to fire
+when the drop completes, but on 1.7.x it is **not reliably delivered** —
+hosts must not block on it exclusively.
+
+**A logging session started while GC is active records nothing.** Loggers
+arm normally (triggers acknowledge with valid IDs), sensors run, and no
+error is reported — but no entries reach the log. This is the critical
+trap for machine-paced hosts that clear-then-start in one connection.
+
+**Readout consumes entries.** Each `READOUT_PAGE_CONFIRM` (0x0E)
+permanently nulls the delivered entries; after a completed readout the log
+reads `0` and a re-download returns nothing. Hosts must treat a completed
+drain as the only copy of the data. (Nulled pages still occupy flash and
+are reclaimed by the next GC — see mood 3 above.)
+
+**Recommended host pattern** (eliminates all of the above):
+
+1. After a clear, do not trust `LENGTH` or wait a fixed delay. Instead,
+   arm the loggers, enable logging, and **poll `LENGTH` until it rises**
+   (2 s cadence; while logging is enabled the count includes the RAM page,
+   so a healthy board confirms within one or two polls). A board that has
+   not confirmed within ~90 s is still garbage-collecting — stop the
+   session and retry later rather than trusting it.
+2. Before reading `LENGTH` for a download, send `PAGE_FLUSH` and poll the
+   length until two consecutive reads agree — and when entries are known
+   to exist, treat a stable `0` as "commit not landed yet," not as an
+   empty log.
+
 ## 0x0C \- Timer Module
 
 The **Module Opcode** is `0x0C`.
