@@ -2345,7 +2345,7 @@ The fusion modes are:
 | Corrected Gyroscope     | `0x05`  | N    |      | 13   | **Notify**: Byte 0-11: float (x, y, z) in °/s Byte 12: Calibration accuracy (0-3)                                                                                                                                                     |
 | Corrected Magnetometer  | `0x06`  | N    |      | 13   | **Notify**: Byte 0-11: float (x, y, z) in µT Byte 12: Calibration accuracy (0-3)                                                                                                                                                      |
 | Quaternion              | `0x07`  | N    |      | 16   | **Notify**: Byte 0-15: float (w, x, y, z)                                                                                                                                                                                             |
-| Euler Angles            | `0x08`  | N    |      | 16   | **Notify**: Byte 0-15: float (heading, pitch, roll, yaw) in degrees                                                                                                                                                                   |
+| Euler Angles            | `0x08`  | N    |      | 16   | **Notify**: Byte 0-15: float (heading, pitch, roll, yaw) in degrees. Observed ranges (fw 1.7.x): heading 0–360, pitch ±180, roll ±90; **yaw duplicates heading** sample-for-sample. See *Euler ↔ Quaternion Relationship* below.        |
 | Gravity Vector          | `0x09`  | N    |      | 12   | **Notify**: Byte 0-11: float (x, y, z) in m/s²                                                                                                                                                                                        |
 | Linear Acceleration     | `0x0A`  | N    |      | 12   | **Notify**: Byte 0-11: float (x, y, z) in m/s²                                                                                                                                                                                        |
 | Calibration State       | `0x0B`  | R    |      | 3    | Byte 0: Accel accuracy Byte 1: Gyro accuracy Byte 2: Mag accuracy (each 0 \= unreliable, 1 \= low, 2 \= medium, 3 \= high)                                                                                                             |
@@ -2383,7 +2383,9 @@ High-level SDKs perform this bookkeeping for you, which is why fusion can appear
 
 The sensor fusion algorithm performs automatic background calibration of all sensors. This cannot be disabled. The **Calibration State** register (`0x0B`) reports the accuracy of each sensor's calibration on a scale from 0 (unreliable) to 3 (high accuracy). A device is considered fully calibrated when all three sensors report accuracy 3.
 
-To calibrate: lay the device on a flat surface and rotate it in 45\-degree intervals while monitoring the calibration state values. Once calibrated, save the calibration offsets via the **Cal Data** registers (`0x0C`, `0x0D`, `0x0E`) and restore them on subsequent connections using boot macros to avoid repeating the calibration.
+To calibrate: lay the device on a flat surface and rotate it in 45\-degree intervals while monitoring the calibration state values. Each sensor responds to a **different** motion: the gyroscope calibrates within seconds of the device being held still; the accelerometer wants the device rested on each of its faces for a few seconds (like rolling a die); the magnetometer wants a slow figure\-8 traced in the air, away from metal and electronics. Once calibrated, save the calibration offsets via the **Cal Data** registers (`0x0C`, `0x0D`, `0x0E`) and restore them on subsequent connections using boot macros to avoid repeating the calibration.
+
+Treat the accuracy values as a **live trust score, not a one\-time achievement**: the algorithm continuously re\-evaluates them and demotes the magnetometer the moment it detects field distortion — which, at a desk full of electronics, is constantly. Holding accuracy 3 on all sensors indefinitely is not realistic indoors. Accuracy **2 (medium) is sufficient for recording orientation data** (Bosch's own guidance); expect the magnetometer to oscillate between 2 and 3 in normal environments.
 
 Nearby magnets, batteries, motors, electronics, jewelry, and steel structures will distort the magnetometer. If the environment cannot be guaranteed magnet\-free, avoid NDoF and M4G modes and use IMU Plus instead.
 
@@ -2392,6 +2394,19 @@ Nearby magnets, batteries, motors, electronics, jewelry, and steel structures wi
 **Euler Angles** (Heading, Pitch, Roll) are suited for applications where tilt angles remain below ~30° and complete rotations are not required, such as digital compasses or pitch/roll monitoring. When pitch reaches 90°, heading becomes undetermined (gimbal lock).
 
 **Quaternions** (W, X, Y, Z) are a four\-component representation that avoids gimbal lock and can describe any arbitrary 3D orientation. Use quaternions when the device may be oriented freely in space or when measuring complete rotations.
+
+#### Euler ↔ Quaternion Relationship (Field-Verified)
+
+The firmware's Euler output does **not** follow the textbook aerospace (Z\-Y\-X) labeling of its own quaternion. Field\-verified on fw 1.7.x NDoF by capturing both channels at the same static poses (all three angles agreed to under 1°):
+
+* **heading** is the classic Z\-Y\-X yaw about quaternion `z`: `heading = atan2(2(wz + xy), 1 − 2(y² + z²))`, normalized to 0–360°.
+* **pitch** is the **negated** classic roll about `x`: `pitch = −atan2(2(wx + yz), 1 − 2(x² + y²))` — the ±180°\-range angle.
+* **roll** is the **negated** classic pitch about `y`: `roll = −asin(2(wy − zx))` — the ±90°\-bounded angle.
+* **yaw** is transmitted identical to heading, sample for sample; it is *not* an independent gyro\-integrated angle on this firmware.
+
+Post\-processing quaternion logs with the textbook formulas puts the tilt angles in the wrong columns with the wrong signs — use the mapping above.
+
+A related field note for 3D visualization: the orientation of the **sensor frame relative to the case** varies by board. On the MetaMotion R the IMU's X/Y axes are rotated 90° about the face normal relative to the case's length/width. If case\-relative orientation matters (e.g. rendering a model of the device), calibrate the offset empirically — or sidestep absolute orientation entirely by rendering rotations relative to a user\-set reference pose (tare).
 
 ### Drift Behavior
 
