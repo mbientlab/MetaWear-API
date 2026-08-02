@@ -49,6 +49,7 @@ nav:
     - MetaMotionS (MMS): metamotion-s.md
   - MetaWear API:
     - API Specification: api-specification.md
+    - USB Transport: usb-transport.md
 
 markdown_extensions:
   - pymdownx.highlight:
