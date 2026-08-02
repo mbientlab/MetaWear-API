@@ -14,6 +14,14 @@ The MMS optionally comes with a plastic case. Please note that the proximity of 
 | :--- | :------------------- | :---------------- | :------------------- |
 | MMS  | 100mAh recharge lipo | 17mm x 25mm x 5mm | 512MB (~67M entries)  |
 
+## USB Connectivity
+
+The MMS is the only MetaSensor that supports **data transfer over USB**, not just charging. The nRF52840 it is built on has a native USB device peripheral, so the board enumerates as a USB CDC serial port and accepts the same MetaWear commands normally sent over Bluetooth.
+
+This is useful for downloading large logs, where a full 512MB readout over BLE is slow.
+
+See [USB Transport](usb-transport.md) for the complete specification.
+
 ## Battery Life
 
 How long the MMS runs on a charge depends on which sensors are active, the sample rate, and whether you're **logging** (recording to onboard memory while disconnected) or **streaming** live over Bluetooth. Streaming is far more power-hungry — the radio alone draws roughly 7.5 mA.
